@@ -32,7 +32,6 @@ const snapBtn = $("#snapBtn");
 const stopBtn = $("#stopBtn");
 const taskInput = $("#task");
 
-let runLog = null;
 let pending = [];
 
 // ------------------------------------------------------------- utilities
@@ -230,44 +229,318 @@ const RENDER = {
   },
 };
 
+// ---------------------------------------------------------------- runs
+
+// Static description of each stage for the rail, step dots and placeholders.
+const STAGE_META = {
+  capture: { zone: "local", zn: "device", doing: "Capturing the visible tab and tagging elements…" },
+  detect: { zone: "local", zn: "device", doing: "Scanning for credentials & personal data…" },
+  redact: { zone: "local", zn: "device", doing: "Masking private regions with semantic tags…" },
+  send: { zone: "cloud", zn: "to cloud", doing: "Building the sanitized payload and running the leak check…" },
+  reason: { zone: "cloud", zn: "cloud", doing: "Gemini is choosing the next action…" },
+  validate: { zone: "local", zn: "device", doing: "Checking the proposed action locally…" },
+  execute: { zone: "local", zn: "device", doing: "Performing the action in the page…" },
+};
+
+const runs = [];
+let activeRun = null; // the run the agent is executing
+let selectedRun = null; // the run on screen
+let runSeq = 0;
+
+const runTabs = $("#runTabs");
+const runbar = $("#runbar");
+
+/** Zone of a stage for a given run (Detect is mixed when the vision detector is on). */
+function zoneOf(run, stage) {
+  if (stage === "detect" && run?.vision) return { zone: "mixed", zn: "+ cloud" };
+  if (stage === "send" && run?.snapshot) return { zone: "local", zn: "preview" };
+  return STAGE_META[stage];
+}
+
+function makeRun({ task, snapshot, settings, maxSteps }) {
+  const id = ++runSeq;
+  const title = snapshot ? `Snapshot ${id}` : `Task ${id}`;
+  const run = {
+    id,
+    title,
+    task,
+    snapshot,
+    vision: settings.detector === "vision",
+    maxSteps,
+    status: "running",
+    stage: null,
+    steps: [],
+    result: null,
+    log: {
+      task,
+      mode: snapshot ? "snapshot" : "agent",
+      startedAt: new Date().toISOString(),
+      detector: settings.detector,
+      reasonModel: settings.reasonModel,
+      steps: [],
+    },
+  };
+
+  run.el = h(
+    "section",
+    { class: "run", "data-run": id },
+    h(
+      "div",
+      { class: "run-h" },
+      h("div", { class: "lbl" }, snapshot ? "Snapshot" : `Task ${id}`),
+      h("div", { class: "task" }, snapshot ? task || "Capture → Detect → Redact preview" : task)
+    ),
+    h(
+      "div",
+      { class: "run-tools" },
+      h("button", { class: "link", onclick: () => setAllCollapsed(run, false) }, "Expand all"),
+      h("button", { class: "link", onclick: () => setAllCollapsed(run, true) }, "Collapse all")
+    )
+  );
+  feed.append(run.el);
+
+  run.dot = h("span", { class: "sdot running" });
+  run.tab = h(
+    "button",
+    { class: "runtab", role: "tab", title: snapshot ? "Privacy snapshot" : task, onclick: () => selectRun(run) },
+    run.dot,
+    h("span", { class: "t" }, title),
+    h(
+      "span",
+      {
+        class: "x",
+        title: "Close",
+        onclick: (e) => {
+          e.stopPropagation();
+          closeRun(run);
+        },
+      },
+      "×"
+    )
+  );
+  runTabs.append(run.tab);
+  runbar.hidden = false;
+  runs.push(run);
+  return run;
+}
+
+function selectRun(run) {
+  selectedRun = run;
+  for (const r of runs) {
+    r.el.classList.toggle("sel", r === run);
+    r.tab.classList.toggle("sel", r === run);
+  }
+  run?.tab.scrollIntoView({ inline: "nearest", block: "nearest" });
+  renderRail();
+}
+
+function closeRun(run) {
+  if (run === activeRun) return; // can't close a running task
+  run.el.remove();
+  run.tab.remove();
+  runs.splice(runs.indexOf(run), 1);
+  if (selectedRun === run) selectRun(runs[runs.length - 1] || null);
+  if (!runs.length) {
+    runbar.hidden = true;
+    renderRail();
+  }
+}
+
+function setRunStatus(run, status) {
+  run.status = status;
+  run.dot.className = `sdot ${status}`;
+  if (run === selectedRun) renderRail();
+}
+
+function setAllCollapsed(run, collapsed) {
+  for (const s of run.steps) s.el.classList.toggle("collapsed", collapsed);
+}
+
+// ---------------------------------------------------------------- rail
+
+const railItems = [...document.querySelectorAll("#railStages li")];
+railItems.forEach((li) => li.addEventListener("click", () => jumpToStage(li.dataset.stage)));
+
+function renderRail() {
+  const run = selectedRun;
+  const step = run?.steps[run.steps.length - 1];
+  $("#railStepLbl").textContent = run?.snapshot ? "Snapshot" : "Step";
+  $("#railStep").textContent = run ? (run.snapshot ? "1/1" : `${run.steps.length}/${run.maxSteps}`) : "–";
+  const finished = run && run.status !== "running" && run.status !== "waiting";
+  const pct = !run ? 0 : finished ? 100 : Math.round((Math.max(0, run.steps.length - 1) / run.maxSteps) * 100 + (100 / run.maxSteps) * stageFraction(run));
+  $("#railBar").style.width = `${Math.min(100, pct)}%`;
+
+  for (const li of railItems) {
+    const stage = li.dataset.stage;
+    const z = zoneOf(run, stage);
+    li.className = `zone-${z.zone}`;
+    li.querySelector(".zn").textContent = z.zn;
+    const state = step?.stages.get(stage);
+    if (state) li.classList.add(state);
+    if (run && run.stage === stage && !finished) li.classList.add("active");
+    li.title = `${li.querySelector(".nm").textContent} — ${z.zone === "cloud" ? "runs in the cloud on sanitized data" : z.zone === "mixed" ? "on-device rules + Gemini vision detector" : "runs on this device"}`;
+  }
+
+  const res = $("#railResult");
+  if (!run) {
+    res.textContent = "";
+    res.className = "rail-result";
+  } else if (run.status === "running") {
+    res.textContent = "running";
+    res.className = "rail-result live";
+  } else if (run.status === "waiting") {
+    res.textContent = "needs you";
+    res.className = "rail-result live";
+  } else {
+    res.textContent = run.status === "done" ? "✓ done" : "■ stopped";
+    res.className = `rail-result ${run.status === "done" ? "ok" : "bad"}`;
+  }
+}
+
+function stageFraction(run) {
+  const step = run.steps[run.steps.length - 1];
+  return step ? step.stages.size / STAGES.length : 0;
+}
+
+function jumpToStage(stage) {
+  const run = selectedRun;
+  const step = run?.steps[run.steps.length - 1];
+  if (!step) return;
+  step.el.classList.remove("collapsed");
+  const cardEl = step.body.querySelector(`.card[data-stage="${stage}"]`);
+  cardEl?.scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
+// ---------------------------------------------------------------- steps
+
+function makeStep(run, n) {
+  const step = { n, t0: performance.now(), stages: new Map(), action: "", result: null };
+  step.sum = h("span", { class: "sum" }, "working…");
+  step.time = h("span", { class: "time" });
+  step.dots = h("span", { class: "dots" });
+  step.body = h("div", { class: "step-body" });
+  step.el = h(
+    "section",
+    { class: "step live" },
+    h(
+      "button",
+      { class: "step-h", onclick: () => step.el.classList.toggle("collapsed") },
+      h("span", { class: "n" }, run.snapshot ? "Snapshot" : `Step ${n}`),
+      step.sum,
+      step.dots,
+      step.time,
+      h("span", { class: "chev" }, "▾")
+    ),
+    step.body
+  );
+  renderDots(run, step);
+  return step;
+}
+
+function renderDots(run, step) {
+  step.dots.replaceChildren(
+    ...STAGES.map((s) => h("i", { class: `zone-${zoneOf(run, s).zone} ${step.stages.get(s) || ""}`, title: s }))
+  );
+}
+
+function summarizeStep(run, step, { collapse }) {
+  step.el.classList.remove("live");
+  const r = step.result;
+  const mark = !r ? null : r.kind === "ok" ? h("span", { class: "ok" }, "✓ ") : r.kind === "skip" ? h("span", { class: "skip" }, "⏸ ") : h("span", { class: "bad" }, "✗ ");
+  step.sum.replaceChildren(...[mark, step.action || (r?.text ?? "—")].filter(Boolean));
+  step.sum.title = [step.action, r?.text].filter(Boolean).join(" → ");
+  step.time.textContent = `${((performance.now() - step.t0) / 1000).toFixed(1)}s`;
+  renderDots(run, step);
+  if (collapse) step.el.classList.add("collapsed");
+}
+
+function removePlaceholders(run) {
+  run?.el.querySelectorAll(".card.pending").forEach((n) => n.remove());
+}
+
 // ---------------------------------------------------------------------- ui
 
 const ui = {
-  runStarted({ task, snapshot, settings }) {
+  runStarted({ task, snapshot, settings, maxSteps }) {
     $("#intro")?.remove();
-    runLog = { task, mode: snapshot ? "snapshot" : "agent", startedAt: new Date().toISOString(), detector: settings.detector, reasonModel: settings.reasonModel, steps: [] };
-    const head = h(
-      "div",
-      { class: "run-h" },
-      h("div", { class: "lbl" }, snapshot ? "Snapshot" : "Task"),
-      h("div", { class: "task" }, snapshot ? task || "Capture → Detect → Redact preview" : task)
-    );
-    append(feed, head);
-    document.querySelector('[data-stage="detect"]').classList.toggle("cloud-assist", settings.detector === "vision");
+    activeRun = makeRun({ task, snapshot, settings, maxSteps });
+    selectRun(activeRun);
     setRunning(true);
     this.status(snapshot ? "Taking a privacy snapshot…" : "Starting…");
   },
 
+  note(text) {
+    const run = activeRun;
+    if (!run) return this.status(text);
+    const step = run.steps[run.steps.length - 1];
+    append(step ? step.body : run.el, h("div", { class: "run-note" }, text));
+  },
+
   beginStep(n) {
-    const sec = h("section", { class: "step" }, h("div", { class: "step-h" }, `Step ${n}`));
-    append(feed, sec);
-    runLog.steps.push({ step: n, cards: [] });
-    return sec;
+    const run = activeRun;
+    const prev = run.steps[run.steps.length - 1];
+    if (prev) summarizeStep(run, prev, { collapse: true });
+    const step = makeStep(run, n);
+    run.steps.push(step);
+    run.log.steps.push({ step: n, cards: [] });
+    append(run.el, step.el);
+    renderRail();
+    return step;
   },
 
   setStage(stage) {
-    const idx = STAGES.indexOf(stage);
-    document.querySelectorAll("#pipeline li").forEach((li, i) => {
-      li.classList.toggle("active", i === idx);
-      li.classList.toggle("done", idx >= 0 && i < idx);
-    });
+    const run = activeRun;
+    if (!run) return;
+    run.stage = stage;
+    removePlaceholders(run);
+    const step = run.steps[run.steps.length - 1];
+    if (stage && step) {
+      const z = zoneOf(run, stage);
+      const ph = h(
+        "article",
+        { class: `card pending zone-${z.zone}`, "data-stage": stage },
+        h(
+          "div",
+          { class: "card-h" },
+          h("span", { class: "num" }, STAGES.indexOf(stage) + 1),
+          h("span", { class: `badge ${z.zone === "mixed" ? "mixed" : z.zone}` }, z.zone === "cloud" ? "cloud" : z.zone === "mixed" ? "local + vision" : "on-device"),
+          h("span", { class: "title" }, stage[0].toUpperCase() + stage.slice(1))
+        ),
+        h("div", { class: "card-b" }, h("span", { class: "spinner" }), STAGE_META[stage].doing)
+      );
+      append(step.body, ph);
+    }
+    if (run === selectedRun) renderRail();
   },
 
   card(S, stage, data) {
+    const run = activeRun;
     const node = RENDER[stage](data);
+    node.classList.add(`zone-${zoneOf(run, stage).zone}`);
+    node.dataset.stage = stage;
+    node.querySelector(".card-h").prepend(h("span", { class: "num" }, STAGES.indexOf(stage) + 1));
     S.lastCard = node;
-    append(S, node);
-    runLog.steps[runLog.steps.length - 1].cards.push({ stage, ...exportable(stage, data) });
+    const ph = S.body.querySelector(`.card.pending[data-stage="${stage}"]`);
+    if (ph) ph.replaceWith(node);
+    else append(S.body, node);
+
+    // Track what the step did for its one-line summary and the rail.
+    S.stages.set(stage, data.skipped ? "skipped" : data.verdict === "block" ? "blocked" : "done");
+    if (stage === "validate") S.action = data.summary;
+    if (stage === "reason" && ["done", "ask_user"].includes(data.decision?.action?.type)) {
+      S.action = describeAction(data.decision.action);
+      S.stages.set("validate", "skipped");
+      S.stages.set("execute", "skipped");
+    }
+    if (stage === "execute") S.result = data.skipped ? { kind: "skip", text: data.detail } : { kind: data.ok ? "ok" : "bad", text: data.detail };
+    if (stage === "send" && data.snapshot) {
+      S.action = "privacy snapshot";
+      S.result = { kind: "ok", text: "nothing sent for reasoning" };
+      for (const s of ["reason", "validate", "execute"]) S.stages.set(s, "skipped");
+    }
+    renderDots(run, S);
+    run.log.steps[run.log.steps.length - 1].cards.push({ stage, ...exportable(stage, data) });
+    if (run === selectedRun) renderRail();
   },
 
   status(text) {
@@ -276,6 +549,8 @@ const ui = {
   },
 
   confirm(S, reason) {
+    const run = activeRun;
+    setRunStatus(run, "waiting");
     return new Promise((resolve) => {
       const box = h(
         "div",
@@ -291,17 +566,22 @@ const ui = {
       const done = (v) => {
         box.replaceWith(h("div", { class: `note ${v ? "" : "warn"}` }, v ? "✓ Approved by you" : "✗ Rejected by you"));
         pending = pending.filter((p) => p !== cancel);
+        if (run.status === "waiting") setRunStatus(run, "running");
         resolve(v);
       };
       const cancel = () => done(false);
       pending.push(cancel);
-      (S.lastCard?.querySelector(".card-b") || S).append(box);
+      if (selectedRun !== run) selectRun(run);
+      S.el.classList.remove("collapsed");
+      (S.lastCard?.querySelector(".card-b") || S.body).append(box);
       box.scrollIntoView({ block: "center", behavior: "smooth" });
       this.status("Waiting for your approval…");
     });
   },
 
   ask(S, question) {
+    const run = activeRun;
+    setRunStatus(run, "waiting");
     return new Promise((resolve) => {
       const input = h("textarea", { rows: 2, placeholder: "Your answer…" });
       const box = card(
@@ -318,11 +598,13 @@ const ui = {
         box.querySelector(".row")?.remove();
         input.disabled = true;
         pending = pending.filter((p) => p !== cancel);
+        if (run.status === "waiting") setRunStatus(run, "running");
         resolve(v);
       };
       const cancel = () => done(null);
       pending.push(cancel);
-      append(S, box);
+      if (selectedRun !== run) selectRun(run);
+      append(S.body, box);
       input.focus();
       this.status("The agent is waiting for your answer…");
     });
@@ -334,10 +616,21 @@ const ui = {
   },
 
   finish({ ok, message }) {
-    const box = h("div", { class: `final${ok ? "" : " bad"}` }, h("span", { class: "lbl" }, ok ? "Result" : "Stopped"), message);
-    append(feed, box);
-    if (runLog) runLog.result = { ok, message, finishedAt: new Date().toISOString() };
-    this.setStage(null);
+    const run = activeRun;
+    if (!run) {
+      this.status(message);
+      return;
+    }
+    removePlaceholders(run);
+    run.stage = null;
+    const last = run.steps[run.steps.length - 1];
+    if (last && !ok && !last.result) last.result = { kind: "bad", text: message };
+    if (last) summarizeStep(run, last, { collapse: false });
+    run.el.append(h("div", { class: `final${ok ? "" : " bad"}` }, h("span", { class: "lbl" }, ok ? "Result" : "Stopped"), message));
+    run.log.result = { ok, message, finishedAt: new Date().toISOString() };
+    activeRun = null;
+    setRunStatus(run, ok ? "done" : "stopped");
+    if (run === selectedRun) run.el.lastChild.scrollIntoView({ block: "nearest", behavior: "smooth" });
     this.status("");
     setRunning(false);
   },
@@ -372,15 +665,14 @@ taskInput.addEventListener("keydown", (e) => {
 });
 
 $("#clearBtn").addEventListener("click", () => {
-  if (agent.running) return;
-  feed.replaceChildren();
-  runLog = null;
+  for (const r of [...runs]) if (r !== activeRun) closeRun(r);
 });
 
 $("#exportBtn").addEventListener("click", () => {
-  if (!runLog) return ui.status("Nothing to export yet.");
-  const blob = new Blob([JSON.stringify(runLog, null, 2)], { type: "application/json" });
-  const a = h("a", { href: URL.createObjectURL(blob), download: `stellar-run-${Date.now()}.json` });
+  if (!selectedRun) return ui.status("Nothing to export yet.");
+  const blob = new Blob([JSON.stringify(selectedRun.log, null, 2)], { type: "application/json" });
+  const name = selectedRun.title.toLowerCase().replace(/\s+/g, "-");
+  const a = h("a", { href: URL.createObjectURL(blob), download: `stellar-${name}-${Date.now()}.json` });
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 });
@@ -491,7 +783,6 @@ $("#saveSettings").addEventListener("click", async () => {
 (async () => {
   const s = await loadSettings();
   applyPresenter(s.presenter);
-  document.querySelector('[data-stage="detect"]').classList.toggle("cloud-assist", s.detector === "vision");
   if (!s.apiKey) {
     ui.status("Add your Gemini API key in Settings (gear icon) to begin.");
   }

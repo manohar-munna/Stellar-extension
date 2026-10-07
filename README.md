@@ -38,6 +38,17 @@ so you can show people exactly what leaves the machine.
 | ↗ Pop-out | Opens the panel in its own big window for projecting. It drives the last-focused browser window. |
 | Export run | Downloads a JSON log of the run (sanitized frames only, never raw captures or private values). |
 
+**Reading the panel**
+
+- **Task tabs** (under Run/Snapshot): every task or snapshot gets its own tab — `Task 1`, `Task 2`, … — with a
+  status dot (blue running · yellow needs you · green done · red stopped). Click to switch, × to close.
+- **Stage rail** (left): the current step (`Step 3/15`) and all seven stages. The pulsing node is the stage running
+  now; each node says where it runs — `DEVICE`, `+ CLOUD` (vision detector), `TO CLOUD`, `CLOUD`. Click a node to
+  jump to that stage's card.
+- **Steps**: finished steps fold into one line — action, ✓/✗, coloured stage dots and duration. Click to expand, or
+  use *Expand all / Collapse all*. Cards are numbered by stage and edged green (on-device) or violet (cloud).
+- **New Tab page**: Chrome blocks extensions on it, so Stellar opens google.com in that tab and starts from there.
+
 ### Demo page
 
 `demo/index.html` is a fictional "Orbit Cloud" account page full of fake

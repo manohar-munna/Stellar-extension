@@ -8,6 +8,8 @@ import { buildRegions, parseVault, knownSecrets, scrubText, scrubUrl, leakCheck,
 import { loadBitmap, renderDetection, renderSanitized, encodeJpeg } from "./redact.js";
 import { validateAction } from "./validate.js";
 
+const NEW_TAB_URL = /^(chrome:\/\/(newtab|new-tab-page)|chrome-search:\/\/|about:blank|edge:\/\/newtab)/;
+
 const RESTRICTED_URL =
   /^(chrome|edge|brave|about|chrome-extension|devtools|view-source|chrome-search):|^https:\/\/(chrome\.google\.com\/webstore|chromewebstore\.google\.com)/;
 
@@ -110,28 +112,40 @@ export class StellarAgent {
     const { settings, ui } = this;
     const snapshot = mode === "snapshot";
 
-    if (!settings.apiKey && (!snapshot || settings.detector === "vision")) {
-      ui.finish({ ok: false, message: "Add your Gemini API key in Settings first." });
-      this.running = false;
-      return;
-    }
-
-    let tab = await findTargetTab();
-    if (!tab || RESTRICTED_URL.test(tab.url || "")) {
-      ui.finish({ ok: false, message: "Chrome does not allow extensions to read this page. Open a normal website tab and try again." });
-      this.running = false;
-      return;
-    }
-    let tabId = tab.id;
-    const windowId = tab.windowId;
     const vault = parseVault(settings.vault);
     const history = [];
     const maxSteps = snapshot ? 1 : Math.max(1, Math.min(50, Number(settings.maxSteps) || 15));
     let consecutiveBlocks = 0;
+    let tabId = null;
 
-    ui.runStarted({ task, snapshot, settings });
+    ui.runStarted({ task, snapshot, settings, maxSteps });
 
     try {
+      if (!settings.apiKey && (!snapshot || settings.detector === "vision")) {
+        throw new Error("Add your Gemini API key in Settings first.");
+      }
+
+      let tab = await findTargetTab();
+      if (tab && NEW_TAB_URL.test(tab.url || tab.pendingUrl || "")) {
+        // Chrome blocks every extension on the New Tab page, so start from Google.
+        if (snapshot) throw new Error("This is Chrome's New Tab page, which extensions can't read. Open any website and take the snapshot there.");
+        ui.note("You're on Chrome's New Tab page, which extensions can't read — opening google.com in this tab to start.");
+        await chrome.tabs.update(tab.id, { url: "https://www.google.com/" });
+        await this.settle(tab.id);
+        tab = await chrome.tabs.get(tab.id);
+        history.push({
+          text: "Step 0: the tab was Chrome's New Tab page (not automatable), so Stellar opened https://www.google.com/ to start.",
+          sig: "start",
+        });
+      }
+      if (!tab || RESTRICTED_URL.test(tab.url || "")) {
+        throw new Error(
+          `Chrome doesn't let extensions read this page${tab?.url ? ` (${tab.url.split("?")[0]})` : ""}. Switch to a website tab — or a New Tab, where Stellar will start from Google.`
+        );
+      }
+      tabId = tab.id;
+      const windowId = tab.windowId;
+
       for (let step = 1; step <= maxSteps; step++) {
         this.checkStop();
         const S = ui.beginStep(step);
@@ -396,7 +410,7 @@ export class StellarAgent {
       this.running = false;
       ui.setStage(null);
       try {
-        await this.cs(tabId, { op: "overlay-remove" });
+        if (tabId != null) await this.cs(tabId, { op: "overlay-remove" });
       } catch {
         /* tab may be gone */
       }

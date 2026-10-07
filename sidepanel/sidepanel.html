@@ -46,21 +46,6 @@
       </div>
     </header>
 
-    <section class="pipeline" id="pipeline" aria-label="Pipeline stages">
-      <ol>
-        <li data-stage="capture" class="z-local"><span class="ic">◉</span><span class="lb">Capture</span></li>
-        <li data-stage="detect" class="z-local"><span class="ic">◎</span><span class="lb">Detect</span></li>
-        <li data-stage="redact" class="z-local"><span class="ic">▣</span><span class="lb">Redact</span></li>
-        <li data-stage="send" class="z-cloud"><span class="ic">⇢</span><span class="lb">Send</span></li>
-        <li data-stage="reason" class="z-cloud"><span class="ic">✦</span><span class="lb">Reason</span></li>
-        <li data-stage="validate" class="z-local"><span class="ic">✓</span><span class="lb">Validate</span></li>
-        <li data-stage="execute" class="z-local"><span class="ic">▶</span><span class="lb">Execute</span></li>
-      </ol>
-      <div class="zones">
-        <span class="zl">on-device</span><span class="zc">cloud (sanitized)</span><span class="zl">on-device</span>
-      </div>
-    </section>
-
     <section class="composer">
       <textarea id="task" rows="3" placeholder="Tell Stellar what to do on this tab…&#10;e.g. “Find the cheapest wireless earbuds and open the product page”"></textarea>
       <div class="row">
@@ -71,21 +56,46 @@
       <div id="statusLine" class="status-line" aria-live="polite"></div>
     </section>
 
-    <main id="feed">
-      <div class="intro" id="intro">
-        <h2>What you'll see here</h2>
-        <p>Every step of the agent is shown as it happens:</p>
-        <ol>
-          <li><b>Capture</b> the visible tab and tag every clickable element (<code>[BUTTON_03]</code>).</li>
-          <li><b>Detect</b> credentials &amp; personal data — DOM rules on-device, plus the Gemini vision detector.</li>
-          <li><b>Redact</b> each hit into a semantic tag like <code>[EMAIL_01]</code>.</li>
-          <li><b>Send</b> only the sanitized frame — with a leak check of the outbound payload.</li>
-          <li><b>Reason</b>: Gemini proposes one action.</li>
-          <li><b>Validate</b> locally (allow-list, risky-action approval, tag resolution) and <b>Execute</b>.</li>
+    <nav class="runbar" id="runbar" hidden aria-label="Tasks">
+      <div class="runtabs" id="runTabs" role="tablist"></div>
+    </nav>
+
+    <div class="workspace">
+      <aside class="rail" id="rail" aria-label="Pipeline progress">
+        <div class="rail-step">
+          <span class="lbl" id="railStepLbl">Step</span>
+          <b id="railStep">–</b>
+          <div class="bar"><i id="railBar"></i></div>
+        </div>
+        <ol id="railStages">
+          <li data-stage="capture"><span class="ic">◉</span><span class="nm">Capture</span><span class="zn"></span></li>
+          <li data-stage="detect"><span class="ic">◎</span><span class="nm">Detect</span><span class="zn"></span></li>
+          <li data-stage="redact"><span class="ic">▣</span><span class="nm">Redact</span><span class="zn"></span></li>
+          <li data-stage="send"><span class="ic">⇡</span><span class="nm">Send</span><span class="zn"></span></li>
+          <li data-stage="reason"><span class="ic">✦</span><span class="nm">Reason</span><span class="zn"></span></li>
+          <li data-stage="validate"><span class="ic">✓</span><span class="nm">Validate</span><span class="zn"></span></li>
+          <li data-stage="execute"><span class="ic">▶</span><span class="nm">Execute</span><span class="zn"></span></li>
         </ol>
-        <p class="hint">Try <b>Snapshot</b> on a page with an email or password to see redaction without running the agent.</p>
-      </div>
-    </main>
+        <div class="rail-result" id="railResult"></div>
+        <div class="rail-legend"><span class="zl">● on-device</span><span class="zc">● cloud</span></div>
+      </aside>
+
+      <main id="feed">
+        <div class="intro" id="intro">
+          <h2>What you'll see here</h2>
+          <p>Every step of the agent is shown as it happens. The rail on the left tracks the current stage:</p>
+          <ol>
+            <li><b>Capture</b> the visible tab and tag every clickable element (<code>[BUTTON_03]</code>).</li>
+            <li><b>Detect</b> credentials &amp; personal data — DOM rules on-device, plus the Gemini vision detector.</li>
+            <li><b>Redact</b> each hit into a semantic tag like <code>[EMAIL_01]</code>.</li>
+            <li><b>Send</b> only the sanitized frame — with a leak check of the outbound payload.</li>
+            <li><b>Reason</b>: Gemini proposes one action.</li>
+            <li><b>Validate</b> locally (allow-list, risky-action approval, tag resolution) and <b>Execute</b>.</li>
+          </ol>
+          <p class="hint">Each task gets its own tab above. Finished steps fold into one line — click to expand.</p>
+        </div>
+      </main>
+    </div>
 
     <footer class="foot">
       <a href="https://stellarai.site/" target="_blank" rel="noopener">stellarai.site</a>
