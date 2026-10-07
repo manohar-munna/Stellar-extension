@@ -466,6 +466,46 @@
     }
   }
 
+  // ------------------------------------------------- human verification
+  // Stellar never solves CAPTCHAs or bot checks. It only detects them so the
+  // agent can pause and hand control to the user, then resume once the
+  // widget's response token is filled (or the interstitial page is gone).
+
+  const CHALLENGE_WIDGETS = [
+    { kind: "Cloudflare Turnstile", sel: 'iframe[src*="challenges.cloudflare.com"], .cf-turnstile', token: '[name="cf-turnstile-response"]' },
+    { kind: "reCAPTCHA", sel: 'iframe[src*="/recaptcha/"][src*="bframe"], iframe[src*="/recaptcha/"]:not([src*="size=invisible"]), .g-recaptcha', token: '[name="g-recaptcha-response"], #g-recaptcha-response' },
+    { kind: "hCaptcha", sel: 'iframe[src*="hcaptcha.com"], .h-captcha', token: '[name="h-captcha-response"]' },
+    { kind: "Arkose / FunCaptcha", sel: 'iframe[src*="arkoselabs"], iframe[src*="funcaptcha"]', token: '[name="fc-token"], #FunCaptcha-Token' },
+  ];
+  const CHALLENGE_TEXT = /verify (that )?you are (a )?human|i'?m not a robot|checking (if the site connection is secure|your browser)|complete the security check|press (and|&) hold/i;
+
+  function challengeElSelector() {
+    return CHALLENGE_WIDGETS.map((w) => w.sel).join(", ") + ", #challenge-form, #challenge-stage";
+  }
+
+  function detectChallenge() {
+    // Cloudflare / bot-manager interstitial pages.
+    if (/^just a moment|^attention required|^one more step|^security check/i.test(document.title.trim()) || document.querySelector("#challenge-form, #challenge-stage, #cf-challenge-running")) {
+      return { pending: true, kind: "Cloudflare browser check" };
+    }
+    for (const w of CHALLENGE_WIDGETS) {
+      const widgets = [...document.querySelectorAll(w.sel)].filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 20 && r.height > 20 && isRendered(el);
+      });
+      if (!widgets.length) continue;
+      const tokens = [...document.querySelectorAll(w.token)];
+      const solved = tokens.length > 0 && tokens.some((t) => (t.value || "").length > 10);
+      if (solved) continue;
+      return { pending: true, kind: w.kind, rect: rectOf(widgets[0].getBoundingClientRect()) };
+    }
+    const text = (document.body?.innerText || "").slice(0, 20000);
+    if (CHALLENGE_TEXT.test(text) && document.querySelectorAll("iframe").length) {
+      return { pending: true, kind: "human verification" };
+    }
+    return { pending: false };
+  }
+
   function inspect(tag) {
     const el = elementMap.get(tag);
     if (!el) return { exists: false };
@@ -483,6 +523,7 @@
         (el instanceof HTMLInputElement && !["checkbox", "radio", "submit", "button", "reset", "image", "file"].includes(el.type)) ||
         el.isContentEditable,
       isSelect: el instanceof HTMLSelectElement,
+      inChallenge: !!el.closest(challengeElSelector()),
     };
   }
 
@@ -570,7 +611,10 @@
           },
           elements: scanElements(),
           pii: scanPii(cmd.known),
+          challenge: detectChallenge(),
         };
+      case "challenge":
+        return detectChallenge();
       case "inspect":
         return inspect(cmd.tag);
       case "execute":

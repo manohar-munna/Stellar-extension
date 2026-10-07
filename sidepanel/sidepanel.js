@@ -591,6 +591,7 @@ const ui = {
           "div",
           { class: "row" },
           h("button", { class: "btn primary", onclick: () => done(input.value.trim() || "(no answer)") }, "Reply"),
+          h("button", { class: "btn ghost", onclick: () => done("Done — I've completed it myself. Continue.") }, "Done, continue"),
           h("button", { class: "btn danger", onclick: () => done(null) }, "Stop")
         )
       );
@@ -608,6 +609,51 @@ const ui = {
       input.focus();
       this.status("The agent is waiting for your answer…");
     });
+  },
+
+  handoff(S, kind) {
+    const run = activeRun;
+    setRunStatus(run, "waiting");
+    S.action = `human verification — ${kind}`;
+    let resolveDone;
+    const done = new Promise((r) => (resolveDone = r));
+    const live = h("div", { class: "watch" }, h("span", { class: "spinner" }), "Watching the tab — resumes automatically once the check is cleared…");
+    const buttons = h(
+      "div",
+      { class: "row" },
+      h("button", { class: "btn ok", onclick: () => finish("manual") }, "I've done it — continue"),
+      h("button", { class: "btn danger", onclick: () => finish("stop") }, "Stop")
+    );
+    const node = card(
+      { title: "Human verification needed", badge: "mixed", badgeText: "you" },
+      h("div", {}, h("b", {}, kind), " is on the page. Stellar doesn't solve CAPTCHAs or bot checks — please complete it yourself in the tab."),
+      live,
+      buttons
+    );
+    node.classList.add("zone-mixed", "handoff");
+    node.dataset.stage = "handoff";
+    let finished = false;
+    const finish = (v) => {
+      if (finished) return;
+      finished = true;
+      pending = pending.filter((p) => p !== cancel);
+      const msg = { auto: "✓ Check cleared — resuming", manual: "✓ You marked it done — resuming", stop: "✗ Stopped", timeout: "✗ Timed out" }[v];
+      live.replaceWith(h("div", { class: `note ${v === "auto" || v === "manual" ? "" : "warn"}` }, msg));
+      buttons.remove();
+      S.result = v === "auto" || v === "manual" ? { kind: "ok", text: "completed by you" } : { kind: "bad", text: msg };
+      for (const s of STAGES.slice(1)) S.stages.set(s, "skipped");
+      renderDots(run, S);
+      if (run.status === "waiting") setRunStatus(run, "running");
+      resolveDone(v);
+    };
+    const cancel = () => finish("stop");
+    pending.push(cancel);
+    if (selectedRun !== run) selectRun(run);
+    S.el.classList.remove("collapsed");
+    append(S.body, node);
+    node.scrollIntoView({ block: "center", behavior: "smooth" });
+    this.status(`Waiting for you to complete the ${kind}…`);
+    return { done, resolve: finish };
   },
 
   cancelPending() {
@@ -702,6 +748,21 @@ popoutBtn.addEventListener("click", () => {
   chrome.windows.create({ url: chrome.runtime.getURL("sidepanel/sidepanel.html?popout=1"), type: "popup", width: 560, height: 960 });
 });
 
+// Theme: follows the OS by default; the header button cycles system → light → dark.
+const THEMES = ["system", "light", "dark"];
+const themeBtn = $("#themeBtn");
+function applyTheme(theme) {
+  if (theme === "system") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.dataset.theme = theme;
+  themeBtn.dataset.theme = theme;
+  themeBtn.title = `Theme: ${theme} (click to change)`;
+}
+themeBtn.addEventListener("click", async () => {
+  const next = THEMES[(THEMES.indexOf(themeBtn.dataset.theme || "system") + 1) % THEMES.length];
+  applyTheme(next);
+  await saveSettings({ theme: next });
+});
+
 // Presenter mode.
 const presenterBtn = $("#presenterBtn");
 function applyPresenter(on) {
@@ -783,6 +844,7 @@ $("#saveSettings").addEventListener("click", async () => {
 (async () => {
   const s = await loadSettings();
   applyPresenter(s.presenter);
+  applyTheme(s.theme || "system");
   if (!s.apiKey) {
     ui.status("Add your Gemini API key in Settings (gear icon) to begin.");
   }

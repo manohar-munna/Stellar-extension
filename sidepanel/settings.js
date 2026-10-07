@@ -13,6 +13,7 @@ export const DEFAULTS = {
   askRisky: true,
   maxSteps: 15,
   presenter: false,
+  theme: "system", // "system" | "light" | "dark"
   vault: "",
 };
 

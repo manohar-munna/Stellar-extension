@@ -48,6 +48,11 @@ so you can show people exactly what leaves the machine.
 - **Steps**: finished steps fold into one line — action, ✓/✗, coloured stage dots and duration. Click to expand, or
   use *Expand all / Collapse all*. Cards are numbered by stage and edged green (on-device) or violet (cloud).
 - **New Tab page**: Chrome blocks extensions on it, so Stellar opens google.com in that tab and starts from there.
+- **CAPTCHAs / bot checks**: Stellar never solves them. When a Cloudflare Turnstile, reCAPTCHA, hCaptcha,
+  Arkose or Cloudflare “Just a moment…” check is on screen, the agent pauses *before* any model call, shows a
+  **Human verification needed** card and an on-page message, and resumes by itself as soon as the check is
+  cleared (or when you click *I’ve done it — continue*). Model actions that target a CAPTCHA widget are blocked.
+- **Theme**: follows your system light/dark setting; the ◐ button in the header cycles System → Light → Dark.
 
 ### Demo page
 

@@ -102,6 +102,44 @@ export class StellarAgent {
     await sleep(400);
   }
 
+  /**
+   * Pause for a CAPTCHA / bot check. Stellar never solves these; the user does,
+   * and the run resumes by itself once the widget reports success (or the
+   * interstitial page is gone), or when the user says so.
+   */
+  async waitForHuman(tabId, S, challenge) {
+    const { ui } = this;
+    ui.setStage(null);
+    await this.cs(tabId, { op: "overlay", visible: true, message: `Please complete the ${challenge.kind} — Stellar resumes automatically` }).catch(() => {});
+    const handoff = ui.handoff(S, challenge.kind);
+    let outcome = null;
+    handoff.done.then((v) => (outcome = outcome || v));
+    const deadline = Date.now() + 5 * 60_000;
+    while (!outcome) {
+      if (this.stopped) {
+        handoff.resolve("stop");
+        throw new StopError();
+      }
+      if (Date.now() > deadline) {
+        handoff.resolve("timeout");
+        throw new Error(`Timed out after 5 minutes waiting for the ${challenge.kind} to be completed.`);
+      }
+      await sleep(1500);
+      try {
+        await this.inject(tabId);
+        const c = await this.cs(tabId, { op: "challenge" });
+        if (c && !c.pending) {
+          outcome = "auto";
+          handoff.resolve("auto");
+        }
+      } catch {
+        /* page is navigating after the check — try again */
+      }
+    }
+    if (outcome === "stop") throw new StopError();
+    await this.settle(tabId);
+  }
+
   // ------------------------------------------------------------------ run
 
   async run({ task, mode }) {
@@ -177,6 +215,14 @@ export class StellarAgent {
           elementCount: scan.elements.length,
         });
         this.checkStop();
+
+        // CAPTCHA / bot check on screen: hand over to the user, no model call.
+        if (!snapshot && scan.challenge?.pending) {
+          bitmap.close?.();
+          await this.waitForHuman(tabId, S, scan.challenge);
+          history.push({ text: `Step ${step}: a ${scan.challenge.kind} appeared and the user completed it by hand.`, sig: "human" });
+          continue;
+        }
 
         // ----------------------------------------------------------- 2 DETECT
         ui.setStage("detect");

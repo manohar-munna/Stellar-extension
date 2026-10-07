@@ -70,6 +70,10 @@ export async function validateAction(proposed, { inspect, elements, secrets, set
       block(`${action.target} is disabled`);
       return finish();
     }
+    if (info.inChallenge) {
+      block(`${action.target} is part of a CAPTCHA / bot check — Stellar never solves those; the user must complete it`);
+      return finish();
+    }
     pass("Element is visible and enabled");
 
     if (action.type === "type") {
