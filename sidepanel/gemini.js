@@ -84,6 +84,16 @@ function orderedKeys(keys, model) {
   return ready.length ? ready : rotated.filter((k) => (parked.get(k) || 0) <= now);
 }
 
+// How long to skip a key for one model. Quota errors carry Google's RetryInfo
+// (e.g. "retryDelay": "41s"; daily quotas give much longer), which we honour.
+function parkMs(status, data) {
+  const info = (data?.error?.details || []).find((d) => String(d["@type"] || "").endsWith("RetryInfo"));
+  const secs = parseFloat(info?.retryDelay);
+  if (secs > 0) return Math.min(Math.max(secs * 1000, 20_000), 6 * 3_600_000);
+  if (status === 429) return /quota/i.test(data?.error?.message || "") ? 10 * 60_000 : 60_000;
+  return 20_000;
+}
+
 // What a failed attempt means: "key" (key is bad), "busy" (try another key),
 // "model" (model unavailable; next model) or "fatal" (the request itself is wrong).
 function classify(status, message) {
@@ -130,8 +140,8 @@ export async function generateJson({ apiKey, model, system, prompt, image, schem
 
   for (let round = 0; round <= BACKOFF_MS.length; round++) {
     if (round > 0) {
-      // Overload is transient: forget per-model parking and try the chain again.
-      for (const k of [...parked.keys()]) if (k.includes("|")) parked.delete(k);
+      // Overload is transient: forget short per-model parks (not quota parks) and go again.
+      for (const [k, until] of [...parked]) if (k.includes("|") && until - Date.now() < 120_000) parked.delete(k);
       const wait = BACKOFF_MS[round - 1];
       onRetry?.(wait, errors[errors.length - 1]);
       await sleep(wait, signal);
@@ -167,7 +177,7 @@ export async function generateJson({ apiKey, model, system, prompt, image, schem
           }
           if (kind === "fatal") throw new GeminiError(message, res.status);
           if (kind === "key") parked.set(key, Date.now() + 3_600_000);
-          else parked.set(`${key}|${m}`, Date.now() + (res.status === 429 ? 60_000 : 20_000));
+          else parked.set(`${key}|${m}`, Date.now() + parkMs(res.status, data));
           if (kind === "model") break;
           continue;
         }
