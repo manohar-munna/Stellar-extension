@@ -483,21 +483,62 @@
     return CHALLENGE_WIDGETS.map((w) => w.sel).join(", ") + ", #challenge-form, #challenge-stage";
   }
 
+  // Widgets such as Cloudflare Turnstile render their iframe inside a *closed*
+  // shadow root, invisible to querySelector. Extensions may open it with
+  // chrome.dom.openOrClosedShadowRoot, so search through every shadow root.
+  function deepQueryAll(selector) {
+    const out = [];
+    const visit = (root) => {
+      out.push(...root.querySelectorAll(selector));
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+      let n;
+      while ((n = walker.nextNode())) {
+        let sr = n.shadowRoot;
+        if (!sr) {
+          try {
+            sr = chrome.dom?.openOrClosedShadowRoot?.(n);
+          } catch {
+            sr = null;
+          }
+        }
+        if (sr) visit(sr);
+      }
+    };
+    visit(document);
+    return out;
+  }
+
+  function visibleBox(el) {
+    // Walk up until something has a real box (shadow hosts / wrappers may be 0×0).
+    for (let cur = el, i = 0; cur && i < 4; cur = cur.parentElement || cur.getRootNode()?.host, i++) {
+      if (!(cur instanceof Element)) continue;
+      const r = cur.getBoundingClientRect();
+      if (r.width > 20 && r.height > 20 && intersectsViewport(r) && isRendered(cur)) return cur;
+    }
+    return null;
+  }
+
   function detectChallenge() {
     // Cloudflare / bot-manager interstitial pages.
     if (/^just a moment|^attention required|^one more step|^security check/i.test(document.title.trim()) || document.querySelector("#challenge-form, #challenge-stage, #cf-challenge-running")) {
       return { pending: true, kind: "Cloudflare browser check" };
     }
+    let deepIframes = null; // computed lazily, it walks the whole DOM
     for (const w of CHALLENGE_WIDGETS) {
-      const widgets = [...document.querySelectorAll(w.sel)].filter((el) => {
-        const r = el.getBoundingClientRect();
-        return r.width > 20 && r.height > 20 && isRendered(el);
-      });
-      if (!widgets.length) continue;
       const tokens = [...document.querySelectorAll(w.token)];
-      const solved = tokens.length > 0 && tokens.some((t) => (t.value || "").length > 10);
+      // 1. Widget elements in the light DOM (implicit rendering, e.g. .cf-turnstile).
+      // 2. The response field's container (explicit rendering puts the iframe in a closed shadow root next to it).
+      // 3. Challenge iframes inside open or closed shadow roots.
+      let box = [...document.querySelectorAll(w.sel)].map(visibleBox).find(Boolean) || tokens.map((t) => visibleBox(t.parentElement)).find(Boolean);
+      if (!box) {
+        deepIframes ??= deepQueryAll("iframe");
+        const frameSel = w.sel.split(",").map((x) => x.trim()).filter((x) => x.startsWith("iframe")).join(", ");
+        box = frameSel ? deepIframes.filter((f) => f.matches(frameSel)).map(visibleBox).find(Boolean) : null;
+      }
+      if (!box) continue;
+      const solved = tokens.some((t) => (t.value || "").length > 10);
       if (solved) continue;
-      return { pending: true, kind: w.kind, rect: rectOf(widgets[0].getBoundingClientRect()) };
+      return { pending: true, kind: w.kind, rect: rectOf(box.getBoundingClientRect()), via: tokens.length ? "response field" : "widget frame" };
     }
     const text = (document.body?.innerText || "").slice(0, 20000);
     if (CHALLENGE_TEXT.test(text) && document.querySelectorAll("iframe").length) {
