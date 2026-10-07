@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Stellar Agent</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
+          <defs>
+            <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#00f0ff" />
+              <stop offset=".55" stop-color="#7c3aed" />
+              <stop offset="1" stop-color="#d946ef" />
+            </linearGradient>
+            <radialGradient id="rg" cx=".5" cy=".5" r=".5">
+              <stop offset="0" stop-color="#38bdf8" />
+              <stop offset=".5" stop-color="#7c3aed" stop-opacity=".6" />
+              <stop offset="1" stop-color="#7c3aed" stop-opacity="0" />
+            </radialGradient>
+          </defs>
+          <rect width="64" height="64" rx="14" fill="#0b0d16" />
+          <circle cx="32" cy="32" r="20" fill="none" stroke="url(#lg)" stroke-width="1.5" stroke-dasharray="3 4" opacity=".55" />
+          <circle cx="32" cy="32" r="14" fill="url(#rg)" />
+          <path d="M32 12 L36 28 L52 32 L36 36 L32 52 L28 36 L12 32 L28 28 Z" fill="url(#lg)" />
+          <circle cx="32" cy="32" r="3" fill="#fff" />
+        </svg>
+        <div>
+          <h1>Stellar</h1>
+          <p>Privacy-first visual browser agent</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="popoutBtn" class="icon-btn" title="Pop out into a large window (for presenting)">
+          <svg viewBox="0 0 24 24"><path d="M14 4h6v6" /><path d="M20 4l-9 9" /><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
+        </button>
+        <button id="presenterBtn" class="icon-btn" title="Presenter mode — blur raw captures in this panel" aria-pressed="false">
+          <svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></svg>
+        </button>
+        <button id="settingsBtn" class="icon-btn" title="Settings">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" /></svg>
+        </button>
+      </div>
+    </header>
+
+    <section class="pipeline" id="pipeline" aria-label="Pipeline stages">
+      <ol>
+        <li data-stage="capture" class="z-local"><span class="ic">◉</span><span class="lb">Capture</span></li>
+        <li data-stage="detect" class="z-local"><span class="ic">◎</span><span class="lb">Detect</span></li>
+        <li data-stage="redact" class="z-local"><span class="ic">▣</span><span class="lb">Redact</span></li>
+        <li data-stage="send" class="z-cloud"><span class="ic">⇢</span><span class="lb">Send</span></li>
+        <li data-stage="reason" class="z-cloud"><span class="ic">✦</span><span class="lb">Reason</span></li>
+        <li data-stage="validate" class="z-local"><span class="ic">✓</span><span class="lb">Validate</span></li>
+        <li data-stage="execute" class="z-local"><span class="ic">▶</span><span class="lb">Execute</span></li>
+      </ol>
+      <div class="zones">
+        <span class="zl">on-device</span><span class="zc">cloud (sanitized)</span><span class="zl">on-device</span>
+      </div>
+    </section>
+
+    <section class="composer">
+      <textarea id="task" rows="3" placeholder="Tell Stellar what to do on this tab…&#10;e.g. “Find the cheapest wireless earbuds and open the product page”"></textarea>
+      <div class="row">
+        <button id="runBtn" class="btn primary">Run agent</button>
+        <button id="snapBtn" class="btn ghost" title="Capture → Detect → Redact and show the payload that would be sent. No reasoning call.">Snapshot</button>
+        <button id="stopBtn" class="btn danger" hidden>Stop</button>
+      </div>
+      <div id="statusLine" class="status-line" aria-live="polite"></div>
+    </section>
+
+    <main id="feed">
+      <div class="intro" id="intro">
+        <h2>What you'll see here</h2>
+        <p>Every step of the agent is shown as it happens:</p>
+        <ol>
+          <li><b>Capture</b> the visible tab and tag every clickable element (<code>[BUTTON_03]</code>).</li>
+          <li><b>Detect</b> credentials &amp; personal data — DOM rules on-device, plus the Gemini vision detector.</li>
+          <li><b>Redact</b> each hit into a semantic tag like <code>[EMAIL_01]</code>.</li>
+          <li><b>Send</b> only the sanitized frame — with a leak check of the outbound payload.</li>
+          <li><b>Reason</b>: Gemini proposes one action.</li>
+          <li><b>Validate</b> locally (allow-list, risky-action approval, tag resolution) and <b>Execute</b>.</li>
+        </ol>
+        <p class="hint">Try <b>Snapshot</b> on a page with an email or password to see redaction without running the agent.</p>
+      </div>
+    </main>
+
+    <footer class="foot">
+      <a href="https://stellarai.site/" target="_blank" rel="noopener">stellarai.site</a>
+      <span class="sep">·</span>
+      <button id="exportBtn" class="link">Export run</button>
+      <span class="sep">·</span>
+      <button id="clearBtn" class="link">Clear</button>
+    </footer>
+
+    <div id="settings" class="drawer" hidden>
+      <div class="drawer-inner">
+        <div class="drawer-h">
+          <h2>Settings</h2>
+          <button id="closeSettings" class="icon-btn" title="Close">✕</button>
+        </div>
+
+        <label class="field">
+          <span>Gemini API key(s)</span>
+          <div class="inline">
+            <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…" />
+            <button id="toggleKey" class="btn ghost sm" type="button">Show</button>
+          </div>
+          <small>Stored only in this browser (chrome.storage.local). Several keys can be separated with commas — rate-limited or rejected keys are rotated out automatically. Get one at aistudio.google.com.</small>
+        </label>
+        <div class="inline">
+          <button id="testKey" class="btn ghost sm" type="button">Test key &amp; load models</button>
+          <span id="keyStatus" class="muted sm"></span>
+        </div>
+
+        <label class="field">
+          <span>Reasoning model</span>
+          <input id="reasonModel" list="modelList" spellcheck="false" />
+        </label>
+        <label class="field">
+          <span>Vision detector model</span>
+          <input id="detectModel" list="modelList" spellcheck="false" />
+        </label>
+        <datalist id="modelList"></datalist>
+
+        <fieldset class="field">
+          <legend>PII detection</legend>
+          <label class="radio"><input type="radio" name="detector" value="vision" />
+            <span><b>Gemini vision + DOM</b><small>Best coverage (faces, names, text in images). The raw frame goes to the detector model — the cloud stand-in for the on-device ONNX detector in the design.</small></span></label>
+          <label class="radio"><input type="radio" name="detector" value="dom" />
+            <span><b>DOM only</b><small>Raw frame never leaves the device. Catches fields, emails, phones, cards, IDs and keys in page text.</small></span></label>
+        </fieldset>
+
+        <fieldset class="field">
+          <legend>Redaction style</legend>
+          <label class="radio row"><input type="radio" name="redactStyle" value="solid" /><span>Solid mask + tag</span></label>
+          <label class="radio row"><input type="radio" name="redactStyle" value="blur" /><span>Blur + tag</span></label>
+        </fieldset>
+
+        <label class="check"><input id="askRisky" type="checkbox" /> <span>Ask before risky actions (pay, delete, submit, filling vault data…)</span></label>
+
+        <label class="field">
+          <span>Max steps per run</span>
+          <input id="maxSteps" type="number" min="1" max="50" />
+        </label>
+
+        <label class="field">
+          <span>Private vault</span>
+          <textarea id="vault" rows="5" spellcheck="false" placeholder="EMAIL=you@example.com&#10;PHONE=+91 98765 43210&#10;NAME=Your Name"></textarea>
+          <small>One <code>KEY=value</code> per line. The AI only sees <code>[VAULT_EMAIL]</code>-style tags; values are filled in locally after validation.</small>
+        </label>
+
+        <div class="drawer-actions">
+          <button id="saveSettings" class="btn primary">Save</button>
+          <span id="saveStatus" class="muted sm"></span>
+        </div>
+      </div>
+    </div>
+
+    <div id="lightbox" class="lightbox" hidden><img alt="" /></div>
+
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

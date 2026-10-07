@@ -1,0 +1,26 @@
+// Persisted settings (chrome.storage.local — never synced off-device).
+
+export const DEFAULTS = {
+  apiKey: "",
+  reasonModel: "gemini-3.6-flash",
+  // Lite is plenty for "find the sensitive boxes" and is far less congested.
+  detectModel: "gemini-3.5-flash-lite",
+  // "vision" = Gemini finds PII in the raw frame (stand-in for the on-device
+  // ONNX detector in the design), merged with local DOM detection.
+  // "dom" = DOM-only detection; the raw frame never leaves the machine.
+  detector: "vision",
+  redactStyle: "solid",
+  askRisky: true,
+  maxSteps: 15,
+  presenter: false,
+  vault: "",
+};
+
+export async function loadSettings() {
+  const stored = await chrome.storage.local.get(Object.keys(DEFAULTS));
+  return { ...DEFAULTS, ...stored };
+}
+
+export async function saveSettings(patch) {
+  await chrome.storage.local.set(patch);
+}

@@ -1,0 +1,14 @@
+# Secrets
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local tooling
+.claude/
+node_modules/
+*.zip
