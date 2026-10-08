@@ -134,20 +134,20 @@
           <div class="set-field">
             <span class="set-label">PII detection</span>
             <div class="segmented" role="radiogroup" aria-label="PII detection">
-              <label><input type="radio" name="detector" value="vision" /><span>Vision + DOM</span></label>
-              <label><input type="radio" name="detector" value="dom" /><span>DOM only</span></label>
+              <label><input type="radio" name="detector" value="local" /><span>On-device</span></label>
+              <label><input type="radio" name="detector" value="vision" /><span>+ Cloud vision</span></label>
             </div>
-            <p class="set-hint opt" data-name="detector" data-value="vision">Best coverage (faces, names, text in images). The raw frame goes to the Gemini detector.</p>
-            <p class="set-hint opt" data-name="detector" data-value="dom">The raw frame never leaves the device. Catches fields, emails, phones, cards, IDs and keys in page text.</p>
+            <p class="set-hint opt" data-name="detector" data-value="local">DOM rules plus on-device face detection. The raw frame never leaves this computer — nothing is sent before redaction.</p>
+            <p class="set-hint opt warn-hint" data-name="detector" data-value="vision">Comparison mode: also asks Gemini to find PII, which sends the <b>unredacted</b> screenshot to the cloud.</p>
           </div>
           <div class="set-field">
-            <span class="set-label">Redaction style</span>
-            <div class="segmented" role="radiogroup" aria-label="Redaction style">
-              <label><input type="radio" name="redactStyle" value="solid" /><span>Solid mask</span></label>
-              <label><input type="radio" name="redactStyle" value="blur" /><span>Blur</span></label>
+            <span class="set-label">Redaction</span>
+            <div class="policy">
+              <span><b>Faces</b> blurred</span>
+              <span><b>Passwords, keys, cards, IDs</b> blacked out</span>
+              <span><b>Other personal data</b> masked + tag</span>
             </div>
-            <p class="set-hint opt" data-name="redactStyle" data-value="solid">Pixels are replaced with a dark box and its tag. Safest.</p>
-            <p class="set-hint opt" data-name="redactStyle" data-value="blur">Heavy blur plus the tag. Softer look, slightly less safe for short text.</p>
+            <p class="set-hint">As PS 26171 asks. Every hidden item keeps a semantic tag like [EMAIL_01].</p>
           </div>
           <label class="switch-row">
             <span><b>Ask before risky actions</b><small>Pay, delete, submit, filling vault data.</small></span>

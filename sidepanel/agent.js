@@ -9,6 +9,7 @@ import { loadBitmap, renderDetection, renderSanitized, encodeJpeg } from "./reda
 import { validateAction } from "./validate.js";
 import { localDecide } from "./local/planner.js";
 import { LOCAL_MODEL, holdLocalModel, loadLocalModel } from "./local/vlm.js";
+import { detectFaces } from "./local/faces.js";
 
 const NEW_TAB_URL = /^(chrome:\/\/(newtab|new-tab-page)|chrome-search:\/\/|about:blank|edge:\/\/newtab)/;
 
@@ -267,12 +268,23 @@ export class StellarAgent {
             ui.note(`Vision detector unavailable (${e.message.slice(0, 120)}) — this frame is redacted with on-device detection only.`);
           }
         }
-        const regions = buildRegions({ domPii: scan.pii, vision, viewport: scan.viewport });
+        // On-device vision: faces in the frame and inside every visible image.
+        let faces = [];
+        let faceMeta = null;
+        try {
+          const r = await detectFaces(bitmap, scan.viewport, scan.images || []);
+          faces = r.faces;
+          faceMeta = { count: r.faces.length, ms: r.ms };
+        } catch (e) {
+          ui.note(`On-device face detector unavailable (${String(e.message || e).slice(0, 100)}) — faces on this frame are not blurred.`);
+        }
+        const regions = buildRegions({ domPii: scan.pii, vision, local: faces, viewport: scan.viewport });
         const secrets = knownSecrets(regions, vault);
         const detectCanvas = renderDetection(bitmap, scan.viewport, regions);
         await ui.card(S, "detect", {
           ms: Math.round(performance.now() - t1),
-          mode: localOnly ? "dom" : settings.detector,
+          mode: localOnly || settings.detector !== "vision" ? "local" : "vision",
+          faceMeta,
           domCount: scan.pii.length,
           visionCount: vision.length,
           visionMeta,
@@ -290,14 +302,14 @@ export class StellarAgent {
           const options = e.options?.map((o) => scrubText(o, secrets));
           return { ...e, label, ...(options ? { options, selected: scrubText(e.selected, secrets) } : {}) };
         });
-        const sanitizedCanvas = renderSanitized(bitmap, scan.viewport, regions, elements, { style: settings.redactStyle });
+        const sanitizedCanvas = renderSanitized(bitmap, scan.viewport, regions, elements);
         const sanitized = encodeJpeg(sanitizedCanvas, 1280, 0.85);
         await ui.card(S, "redact", {
           ms: Math.round(performance.now() - t2),
           image: sanitized.dataUrl,
           regions,
           elementCount: elements.length,
-          style: settings.redactStyle,
+          policy: true,
         });
         bitmap.close?.();
         this.checkStop();

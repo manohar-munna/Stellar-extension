@@ -5,11 +5,11 @@ export const DEFAULTS = {
   reasonModel: "gemini-3.6-flash",
   // Lite is plenty for "find the sensitive boxes" and is far less congested.
   detectModel: "gemini-3.5-flash-lite",
-  // "vision" = Gemini finds PII in the raw frame (stand-in for the on-device
-  // ONNX detector in the design), merged with local DOM detection.
-  // "dom" = DOM-only detection; the raw frame never leaves the machine.
-  detector: "vision",
-  redactStyle: "solid",
+  // "local" (default) = DOM rules + on-device face detection; the raw frame
+  // never leaves the machine (PS 26171: sanitize before any network request).
+  // "vision" = also ask Gemini to find PII in the raw frame — a comparison
+  // mode that sends the unredacted screenshot to the cloud.
+  detector: "local",
   askRisky: true,
   maxSteps: 15,
   presenter: false,
@@ -29,7 +29,15 @@ export const DEFAULTS = {
 };
 
 export async function loadSettings() {
-  const stored = await chrome.storage.local.get(Object.keys(DEFAULTS));
+  const stored = await chrome.storage.local.get([...Object.keys(DEFAULTS), "privacyV2"]);
+  // One-time move to the on-device detector: earlier builds defaulted to the
+  // cloud detector, which sends the raw frame before redaction.
+  if (!stored.privacyV2) {
+    stored.detector = "local";
+    await chrome.storage.local.set({ detector: "local", privacyV2: true });
+  }
+  if (stored.detector === "dom") stored.detector = "local";
+  delete stored.privacyV2;
   return { ...DEFAULTS, ...stored };
 }
 

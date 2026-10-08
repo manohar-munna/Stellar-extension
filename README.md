@@ -98,22 +98,19 @@ in locally after validation — and re-redacted on the next frame.
 | # | Stage | Where | Implementation |
 | --- | --- | --- | --- |
 | 1 | **Capture** | on-device | `chrome.tabs.captureVisibleTab` + a DOM scan that tags every visible interactive element (`[BUTTON_03]`, `[INPUT_02]`, `[LINK_07]`…) — Set-of-Marks style. |
-| 2 | **Detect** | on-device + vision | **DOM rules** (local): password/OTP/card/autofill fields, and regexes over visible text for emails, phones, cards (Luhn-checked), Aadhaar, PAN, API keys/JWTs, and your vault values. **Gemini vision** (optional): names, addresses, faces, text inside images — returned as `box_2d` boxes. The two are merged. |
-| 3 | **Redact** | on-device | Canvas masks each region (solid or blur) and stamps its semantic tag. The same value always gets the same tag. |
+| 2 | **Detect** | on-device | **DOM rules**: password/OTP/card/autofill fields, and regexes over visible text for emails, phones, cards (Luhn-checked), Aadhaar, PAN, API keys/JWTs, and your vault values. **On-device face detection** (MediaPipe BlazeFace, WebAssembly) over the whole frame and zoomed into every visible image. *Optional comparison mode:* Gemini vision also looks for names, addresses and text in images — this sends the unredacted frame, so it is off by default. |
+| 3 | **Redact** | on-device | Per PS 26171: **faces blurred** (pixelated + blurred), **passwords, keys, OTPs, cards and IDs blacked out**, **other PII masked** — each stamped with its semantic tag. The same value always gets the same tag. |
 | 4 | **Send** | → cloud | Only the sanitized JPEG + a scrubbed prompt (element labels, scrubbed URL/title, previous actions). A **leak check** blocks the request if any known private value appears in the outbound text. |
 | 5 | **Reason** | cloud | Gemini returns one JSON action: `click / type / select / scroll / press_key / navigate / go_back / wait / done / ask_user`. |
 | 6 | **Validate** | on-device | Allow-list, target must be a real visible enabled element from this frame, tags resolved to real values locally, unknown tags blocked, tags never substituted into URLs (exfiltration guard), loop detection, and **user approval** for risky actions (pay / delete / submit / send / vault fills / typing into password fields). |
 | 7 | **Execute** | on-device | Content script performs the action on the real element (framework-safe value setting, full pointer sequence, Enter-to-submit), follows newly opened tabs, waits for the page to settle, loops. |
 
-### Privacy note on the vision detector
+### No network request before redaction
 
-In the original design the detector runs on-device (ONNX Runtime Web / WebGPU).
-For simplicity this build uses **Gemini as the detector**, which means the *raw*
-frame is sent to Gemini for that one call. The panel labels this stage as
-"local + vision". If you need the raw frame to never leave the machine, choose
-**Settings → PII detection → DOM only** — Snapshot then makes zero network calls,
-and Run sends only the sanitized frame. Swapping in an on-device model only
-requires replacing the `detector === "vision"` block in `sidepanel/agent.js`.
+By default nothing leaves the machine until the frame is redacted, as PS 26171 requires: detection is DOM rules
+plus on-device face detection, and a Snapshot makes **zero** network requests. **Settings → PII detection →
++ Cloud vision** adds Gemini as an extra detector for comparison; it sends the *unredacted* frame for that one call,
+and the panel labels the stage "local + cloud vision".
 
 ---
 
@@ -171,7 +168,7 @@ vendor/                  Transformers.js, ONNX Runtime Web, pdf.js (see vendor/R
 
 - Chrome blocks extensions on `chrome://` pages, the Web Store and some PDFs.
 - Cross-origin iframes and closed shadow roots aren't scanned by the DOM layer
-  (the vision detector still sees them; element tags won't exist for them).
+  (on-device face detection still covers the pixels; element tags won't exist for them).
 - Canvas-only apps (Figma, Google Docs editor) expose few DOM elements to act on.
 - Defaults: `gemini-3.6-flash` for reasoning, `gemini-3.5-flash-lite` for vision
   detection (2–4 s, and far less congested). If a model is overloaded (503),

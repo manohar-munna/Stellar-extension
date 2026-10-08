@@ -212,7 +212,8 @@ const RENDER = {
         "div",
         { class: "stats" },
         h("div", { class: "stat" }, h("b", {}, d.domCount), h("span", {}, "DOM hits (local)")),
-        h("div", { class: "stat" }, h("b", {}, vision ? d.visionCount : "—"), h("span", {}, vision ? "Vision hits" : "Vision off")),
+        h("div", { class: "stat" }, h("b", {}, d.faceMeta ? d.faceMeta.count : "—"), h("span", {}, "Faces (on-device)")),
+        vision ? h("div", { class: "stat" }, h("b", {}, d.visionCount), h("span", {}, "Cloud vision hits")) : null,
         h("div", { class: "stat" }, h("b", {}, uniq.length), h("span", {}, "semantic tags"))
       ),
       shot(d.image, true),
@@ -241,11 +242,12 @@ const RENDER = {
           { class: "note warn" },
           `Vision detector: ${d.visionMeta.model} · ${d.visionMeta.latencyMs} ms · ${usageText(d.visionMeta.usage)}` +
             `${d.visionMeta.keyCount > 1 ? ` · key ${d.visionMeta.keyIndex}/${d.visionMeta.keyCount}` : ""}. ` +
-            "This stage stands in for the on-device detector, so the raw frame is sent to it. Switch to DOM-only in Settings to keep the frame local."
+            "Comparison mode: the unredacted frame was sent to the cloud detector. Switch PII detection to On-device in Settings to keep it local."
         )
       );
     }
-    return card({ title: "Detect", badge: vision ? "mixed" : "local", badgeText: vision ? "local + vision" : "on-device", meta: `${d.ms} ms` }, ...body);
+    if (d.faceMeta) body.push(h("div", { class: "note" }, `On-device face detector (BlazeFace): ${d.faceMeta.count} face${d.faceMeta.count === 1 ? "" : "s"} in ${d.faceMeta.ms} ms · nothing sent`));
+    return card({ title: "Detect", badge: vision ? "mixed" : "local", badgeText: vision ? "local + cloud vision" : "on-device", meta: `${d.ms} ms` }, ...body);
   },
 
   redact(d) {
@@ -254,7 +256,7 @@ const RENDER = {
       { title: "Redact → semantic tags", badge: "local", badgeText: "on-device", meta: `${d.ms} ms` },
       shot(d.image, false),
       uniq.length ? h("div", { class: "tags" }, uniq.map((r) => tagChip(r.tag, r.category))) : h("div", { class: "note" }, "Nothing to mask."),
-      h("div", { class: "note" }, `${d.elementCount} elements labelled for actions · ${d.style === "blur" ? "blur" : "solid"} masking`)
+      h("div", { class: "note" }, `${d.elementCount} elements labelled for actions · faces blurred, credentials blacked out, other PII masked`)
     );
   },
 
@@ -364,6 +366,7 @@ const runbar = $("#runbar");
 /** Zone of a stage for a given run (Detect is mixed when the vision detector is on). */
 function zoneOf(run, stage) {
   if (stage === "detect" && run?.vision) return { zone: "mixed", zn: "+ cloud" };
+  if (stage === "detect") return { zone: "local", zn: "device" };
   if (stage === "send" && run?.snapshot) return { zone: "local", zn: "preview" };
   return STAGE_META[stage];
 }
@@ -677,7 +680,7 @@ const ui = {
     if (stage === "detect") {
       const uniq = uniqueRegions(data.regions);
       uniq.forEach((r) => run.stats.tags.add(r.tag));
-      const how = data.mode === "vision" ? "on-device rules + vision detector" : "on-device rules";
+      const how = data.mode === "vision" ? "on-device + cloud vision" : "on-device rules + face detection";
       if (uniq.length) setBrief(S, "hidden", "local", "Hidden", `${uniq.length} private item${uniq.length === 1 ? "" : "s"}`, h("span", { class: "chips" }, tagChips(data.regions)));
       else setBrief(S, "hidden", "local", "Hidden", h("span", { class: "dim" }, `nothing private on screen (${how})`));
     }
@@ -949,8 +952,7 @@ async function openSettings() {
   $("#apiKey").value = s.apiKey;
   $("#reasonModel").value = s.reasonModel;
   $("#detectModel").value = s.detectModel;
-  document.querySelector(`input[name=detector][value=${s.detector}]`).checked = true;
-  document.querySelector(`input[name=redactStyle][value=${s.redactStyle}]`).checked = true;
+  document.querySelector(`input[name=detector][value=${s.detector === "vision" ? "vision" : "local"}]`).checked = true;
   document.querySelector(`input[name=pace][value=${s.pace || "guided"}]`).checked = true;
   document.querySelector(`input[name=localBackup][value=${s.localBackup || "auto"}]`).checked = true;
   $("#localPreload").checked = s.localPreload !== false;
@@ -1000,8 +1002,7 @@ $("#saveSettings").addEventListener("click", async () => {
     apiKey: $("#apiKey").value.trim(),
     reasonModel: $("#reasonModel").value.trim() || DEFAULTS.reasonModel,
     detectModel: $("#detectModel").value.trim() || DEFAULTS.detectModel,
-    detector: document.querySelector("input[name=detector]:checked")?.value || "vision",
-    redactStyle: document.querySelector("input[name=redactStyle]:checked")?.value || "solid",
+    detector: document.querySelector("input[name=detector]:checked")?.value || "local",
     pace: document.querySelector("input[name=pace]:checked")?.value || "guided",
     localBackup: document.querySelector("input[name=localBackup]:checked")?.value || "auto",
     localPreload: $("#localPreload").checked,

@@ -72,8 +72,67 @@ export function renderDetection(bitmap, viewport, regions) {
   return c;
 }
 
-/** Sanitized view: PII masked with semantic tags + interactive element marks. */
-export function renderSanitized(bitmap, viewport, regions, elements, { style = "solid" } = {}) {
+// Redaction policy from PS 26171: blur faces, black out passwords, mask PII.
+const BLUR = new Set(["FACE", "IMAGE", "SIGNATURE"]);
+const BLACK = new Set(["PASSWORD", "API_KEY", "OTP", "CVV", "CARD", "ACCOUNT", "GOV_ID"]);
+
+export function treatmentOf(category) {
+  return BLUR.has(category) ? "blur" : BLACK.has(category) ? "black" : "mask";
+}
+
+function drawTag(ctx, label, b, s, { small = false } = {}) {
+  let size = small ? 10 * s : Math.min(b.h * 0.62, 13 * s);
+  ctx.font = `700 ${size}px ui-monospace, Consolas, monospace`;
+  const w = ctx.measureText(label).width;
+  if (!small && w > b.w * 0.94) {
+    size = Math.max(7 * s, (size * b.w * 0.94) / w);
+    ctx.font = `700 ${size}px ui-monospace, Consolas, monospace`;
+  }
+  if (small) {
+    // A chip in the corner, so the blurred area stays recognisable as a photo.
+    const pad = 3 * s;
+    const cw = ctx.measureText(label).width + pad * 2;
+    ctx.fillStyle = "rgba(11,11,18,0.85)";
+    ctx.fillRect(b.x, b.y, Math.min(cw, b.w), size + pad * 2);
+    ctx.fillStyle = "#f5f6f8";
+    ctx.textBaseline = "top";
+    ctx.fillText(label, b.x + pad, b.y + pad, b.w - pad * 2);
+    return;
+  }
+  ctx.fillStyle = "#f5f6f8";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2, b.w * 0.96);
+  ctx.textAlign = "start";
+}
+
+/** Pixelate then blur a region in place: identity is gone, "there is a photo here" stays. */
+function blurRegion(ctx, c, b, s) {
+  const x = Math.max(0, Math.floor(b.x));
+  const y = Math.max(0, Math.floor(b.y));
+  const w = Math.min(c.width - x, Math.ceil(b.w));
+  const h = Math.min(c.height - y, Math.ceil(b.h));
+  if (w < 2 || h < 2) return;
+  // About five blocks across the face: features are gone, the shape of a photo remains.
+  const cells = 5;
+  const tiny = document.createElement("canvas");
+  tiny.width = Math.max(1, Math.round((cells * w) / Math.min(w, h)));
+  tiny.height = Math.max(1, Math.round((cells * h) / Math.min(w, h)));
+  tiny.getContext("2d").drawImage(c, x, y, w, h, 0, 0, tiny.width, tiny.height);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  ctx.imageSmoothingEnabled = false;
+  ctx.filter = `blur(${Math.max(3, Math.round(Math.min(w, h) / 14))}px)`;
+  ctx.drawImage(tiny, 0, 0, tiny.width, tiny.height, x, y, w, h);
+  ctx.filter = "none";
+  ctx.imageSmoothingEnabled = true;
+  ctx.restore();
+}
+
+/** Sanitized view: per-category redaction with semantic tags + interactive element marks. */
+export function renderSanitized(bitmap, viewport, regions, elements) {
   const s = bitmap.width / viewport.w;
   const { c, ctx } = makeCanvas(bitmap);
 
@@ -87,41 +146,22 @@ export function renderSanitized(bitmap, viewport, regions, elements, { style = "
     chip(ctx, e.tag, b.x, b.y, color, s, { maxX: c.width });
   }
 
-  // Redactions on top.
-  for (const r of regions) {
+  // Redactions on top: blurred faces first, then solid masks (which win on overlap).
+  const ordered = [...regions].sort((a, b) => (treatmentOf(a.category) === "blur" ? 0 : 1) - (treatmentOf(b.category) === "blur" ? 0 : 1));
+  for (const r of ordered) {
     const b = scaled(r.rect, s, 2);
     const color = CATEGORY_COLORS[r.category] || "#f43f5e";
-    ctx.save();
-    if (style === "blur") {
-      ctx.beginPath();
-      ctx.rect(b.x, b.y, b.w, b.h);
-      ctx.clip();
-      ctx.filter = `blur(${Math.round(14 * s)}px)`;
-      ctx.drawImage(c, b.x - 40 * s, b.y - 40 * s, b.w + 80 * s, b.h + 80 * s, b.x - 40 * s, b.y - 40 * s, b.w + 80 * s, b.h + 80 * s);
-      ctx.filter = "none";
-      ctx.fillStyle = "rgba(11,11,18,0.55)";
-      ctx.fillRect(b.x, b.y, b.w, b.h);
-    } else {
-      ctx.fillStyle = "#0b0b12";
-      ctx.fillRect(b.x, b.y, b.w, b.h);
+    const how = treatmentOf(r.category);
+    if (how === "blur") {
+      blurRegion(ctx, c, b, s);
+      drawTag(ctx, `[${r.tag}]`, b, s, { small: true });
+      continue;
     }
+    ctx.fillStyle = how === "black" ? "#050507" : "#1c2033";
+    ctx.fillRect(b.x, b.y, b.w, b.h);
     ctx.fillStyle = color;
     ctx.fillRect(b.x, b.y, Math.max(2 * s, 3), b.h);
-    ctx.restore();
-
-    const label = `[${r.tag}]`;
-    let size = Math.min(b.h * 0.62, 13 * s);
-    ctx.font = `700 ${size}px ui-monospace, Consolas, monospace`;
-    const w = ctx.measureText(label).width;
-    if (w > b.w * 0.94) {
-      size = Math.max(7 * s, (size * b.w * 0.94) / w);
-      ctx.font = `700 ${size}px ui-monospace, Consolas, monospace`;
-    }
-    ctx.fillStyle = "#f5f6f8";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2, b.w * 0.96);
-    ctx.textAlign = "start";
+    drawTag(ctx, `[${r.tag}]`, b, s);
   }
   return c;
 }

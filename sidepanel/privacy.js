@@ -76,7 +76,7 @@ export function box2dToRect(box, viewport) {
  * Identical DOM values share one tag, so the model sees a consistent
  * [EMAIL_01] wherever that address appears.
  */
-export function buildRegions({ domPii = [], vision = [], viewport }) {
+export function buildRegions({ domPii = [], vision = [], local = [], viewport }) {
   const regions = [];
 
   for (const d of domPii) {
@@ -84,6 +84,18 @@ export function buildRegions({ domPii = [], vision = [], viewport }) {
     const dup = regions.find((r) => iou(r.rect, d.rect) > 0.6);
     if (dup) continue;
     regions.push({ category, rect: d.rect, source: "dom", value: d.value, detail: d.detail, fixedTag: d.vaultTag });
+  }
+
+  // On-device vision detections (e.g. faces) arrive as CSS-pixel rects.
+  for (const d of local) {
+    const rect = d.rect;
+    if (!rect || rect.w < 3 || rect.h < 3) continue;
+    const overlap = regions.find((r) => iou(r.rect, rect) > 0.3 || coverage(r.rect, rect) > 0.7 || coverage(rect, r.rect) > 0.7);
+    if (overlap) {
+      overlap.rect = union(overlap.rect, rect);
+      continue;
+    }
+    regions.push({ category: normalizeCategory(d.category), rect, source: "on-device vision", detail: d.detail || "" });
   }
 
   for (const v of vision) {

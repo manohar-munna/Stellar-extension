@@ -359,6 +359,18 @@
     return found;
   }
 
+  // Visible images, videos and canvases: where the on-device face detector zooms in.
+  function scanImages() {
+    const out = [];
+    for (const el of document.querySelectorAll("img, video, canvas, picture, [role=img], [style*='background-image']")) {
+      const r = el.getBoundingClientRect();
+      if (r.width < 24 || r.height < 24 || !intersectsViewport(r) || !isRendered(el)) continue;
+      out.push(rectOf(r));
+      if (out.length >= 60) break;
+    }
+    return out;
+  }
+
   // ------------------------------------------------------------- overlay UI
 
   let overlayHost = null;
@@ -659,6 +671,7 @@
           },
           elements: scanElements(),
           pii: scanPii(cmd.known),
+          images: scanImages(),
           challenge: detectChallenge(),
         };
       case "challenge":

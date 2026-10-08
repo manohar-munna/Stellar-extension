@@ -1481,9 +1481,7 @@ pre {
 }
 
 .set-card:has(input[name="detector"][value="vision"]:checked) .opt[data-name="detector"][data-value="vision"],
-.set-card:has(input[name="detector"][value="dom"]:checked) .opt[data-name="detector"][data-value="dom"],
-.set-card:has(input[name="redactStyle"][value="solid"]:checked) .opt[data-name="redactStyle"][data-value="solid"],
-.set-card:has(input[name="redactStyle"][value="blur"]:checked) .opt[data-name="redactStyle"][data-value="blur"],
+.set-card:has(input[name="detector"][value="local"]:checked) .opt[data-name="detector"][data-value="local"],
 .set-card:has(input[name="localBackup"][value="auto"]:checked) .opt[data-name="localBackup"][data-value="auto"],
 .set-card:has(input[name="localBackup"][value="always"]:checked) .opt[data-name="localBackup"][data-value="always"],
 .set-card:has(input[name="localBackup"][value="off"]:checked) .opt[data-name="localBackup"][data-value="off"],
@@ -1750,4 +1748,26 @@ pre {
 
 .vr .row .btn.primary {
   flex: 1;
+}
+
+/* Redaction policy summary */
+.policy {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.policy b {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.warn-hint {
+  color: var(--warn-text);
 }
