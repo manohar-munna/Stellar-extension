@@ -7,7 +7,7 @@
 import { askLocal, LOCAL_MODEL } from "./vlm.js";
 
 const ELEMENT_TAG = /\[((?:INPUT|BUTTON|LINK|SELECT|CHECKBOX|RADIO|TAB|OPTION)_\d{2})\]/g;
-const SUBMIT = /\b(send|submit|save|continue|next|confirm|search|apply|go|sign in|log ?in|done|finish|register|create)\b/i;
+const SUBMIT = /\b(send|submit|save|continue|next|confirm|search|apply|go|sign in|log ?in|done|finish|register|create|change|update|subscribe|verify)\b/i;
 const DESTRUCTIVE = /\b(delete|remove|cancel|deactivate|sign out|log ?out|unsubscribe|rotate)\b/i;
 const STOP = new Set("the and for with from that this your into about then them they have will what when which using use please also just make sure".split(" "));
 
@@ -54,7 +54,7 @@ function actedTags(history) {
 }
 
 function searchQuery(task) {
-  const m = task.match(/search(?:\s+\w+)?\s+for\s+["“']?(.+?)["”']?(?:,|\.|\s+and\s+|\s+then\s+|$)/i);
+  const m = task.match(/search(?:\s+\w+){0,3}\s+for\s+["“']?(.+?)["”']?(?:,|\.|\s+and\s+|\s+then\s+|$)/i);
   return m ? m[1].trim() : null;
 }
 
@@ -82,7 +82,7 @@ export function rankCandidates({ task, elements, history, vaultTags }) {
         if (e.filled) score -= 5;
         if (vault && /vault|my |me\b|mine/i.test(task)) score += 3;
         if (/search/i.test(e.label) && query && !searched) score += 3;
-        if (/message|comment|description|details|note|reason|why/i.test(e.label) && /ask|say|tell|message|write|request|explain|mention/i.test(task)) score += messageFromTask(task) ? 3 : 2;
+        if (/message|comment|feedback|description|details|note|reason|why/i.test(e.label) && /ask|say|tell|message|write|request|explain|mention|feedback/i.test(task)) score += messageFromTask(task) ? 3 : 2;
         if (e.sensitive) score -= 2;
       }
       if (e.kind === "SELECT") {
@@ -92,8 +92,9 @@ export function rankCandidates({ task, elements, history, vaultTags }) {
       if (e.kind === "BUTTON" && SUBMIT.test(e.label)) score += 1;
       if (DESTRUCTIVE.test(e.label) && !overlap(words(e.label), tw)) score -= 4;
       if (e.kind === "LINK") score -= 0.5;
-      const cand = { e, vault, searchOk: !!query && !searched && /search/i.test(e.label), score: score - idx * 0.01 };
-      if ((e.kind === "INPUT" && !e.filled && score > 0) || (e.kind === "SELECT" && score > 0)) {
+      if ((e.kind === "CHECKBOX" || e.kind === "RADIO") && !e.checked && TICK.test(task) && (overlap(words(e.label), tw) || /confirm|agree|accept|consent|terms/i.test(e.label))) score += 3;
+      const cand = { e, vault, searchOk: !!query && !searched && /search/i.test(e.label), score: score - idx * 0.0001 };
+      if ((e.kind === "INPUT" && !e.filled && score > 0) || ((e.kind === "SELECT" || e.kind === "CHECKBOX" || e.kind === "RADIO") && score > 0)) {
         if (e.form != null) pendingInForm.set(e.form, (pendingInForm.get(e.form) || 0) + 1);
       }
       return cand;
@@ -110,6 +111,8 @@ export function rankCandidates({ task, elements, history, vaultTags }) {
   }
   return scored.sort((a, b) => b.score - a.score);
 }
+
+const TICK = /\b(tick|check|agree|accept|confirm|consent)\b/i;
 
 function pickOption(options, task) {
   const tw = words(task);
@@ -142,9 +145,11 @@ function cleanText(t, task = "") {
 
 /** Deterministic fallback message built from the task ("asking to X" -> "Hello, I would like to X."). */
 function messageFromTask(task) {
-  const m = task.match(/(?:asking|ask|request(?:ing)?|saying|say|telling|tell them|mention(?:ing)?)\s+(?:to\s+|that\s+)?(.+?)(?:,|\.|\s+and\s+(?:send|submit)|$)/i);
+  const m = task.match(/(asking|ask|request(?:ing)?|saying|say|telling|tell them|mention(?:ing)?)\s+(?:to\s+|that\s+)?(.+?)(?:,|\.|\s+and\s+(?:send|submit)|$)/i);
   if (!m) return "";
-  const body = m[1].trim();
+  const body = m[2].trim();
+  // "saying they are very clear now" is quoted as said, not turned into a request.
+  if (/^(say|tell|mention)/i.test(m[1])) return `${body.replace(/^i\b/, "I").replace(/^./, (c) => c.toUpperCase())}.`;
   // A statement ("my card was charged twice", "I cannot log in") is passed on as is;
   // a verb phrase ("downgrade my plan") becomes a request.
   if (/^(i|i'm|i've|my|our|we|the|it|there|this|that)\b/i.test(body)) return `Hello, ${body.replace(/^i\b/, "I")}. Thank you.`;
@@ -185,8 +190,9 @@ function missingRequiredVault({ task, elements, history, vaultTags, ranked }) {
 /** A fill whose value is fully determined without drafting anything. */
 function determinedFill(c, task) {
   const e = c.e;
-  if (e.kind === "INPUT") return !!(c.vault || c.searchOk || (/message|comment|description|details|note|reason|why/i.test(e.label) && messageFromTask(task)));
+  if (e.kind === "INPUT") return !!(c.vault || c.searchOk || (/message|comment|feedback|description|details|note|reason|why/i.test(e.label) && messageFromTask(task)));
   if (e.kind === "SELECT") return !!pickOption(e.options, task);
+  if (e.kind === "CHECKBOX" || e.kind === "RADIO") return !e.checked && TICK.test(task);
   return false;
 }
 
@@ -292,7 +298,10 @@ export async function localDecide({ task, elements, history, vault, imageBlob, m
     // stated message, a matching option): their order doesn't matter, so take
     // the first one on the page.
     const linkOk = top.e.kind !== "LINK" || top.score >= 5;
-    if (top.score < 2.9 || !linkOk) return notSure(`no strong candidate (top "${top.e.label}" ${top.score.toFixed(1)})`);
+    if (top.score < 2.9 || !linkOk) {
+      if (actedCount && top.score < 2) return notSure("nothing clearly left to do on-device — Gemini verifies the page on a redacted frame and finishes or picks the next step");
+      return notSure(`no strong candidate (top "${top.e.label}" ${top.score.toFixed(1)})`);
+    }
     tied = viable.filter((c) => c.score >= 2.9 && top.score - c.score < 1.5);
     if (tied.length > 1) {
       if (!tied.every((c) => determinedFill(c, task))) return notSure(`no clear winner between ${tied.map((c) => `"${c.e.label}"`).join(" and ")}`);
@@ -322,6 +331,8 @@ export async function localDecide({ task, elements, history, vault, imageBlob, m
     const finishesForm = top.e.kind === "BUTTON" && SUBMIT.test(top.e.label) && top.e.form != null && actedForms.has(top.e.form);
     if (!finishesForm) return notSure(`choosing "${top.e.label}" needs judgement — Gemini picks links, results and menus`);
   }
+
+  if (first) shortlist = shortlist.filter((c) => c.e.kind !== "LINK");
 
   // FastVLM chooses among the top candidates while looking at the sanitized frame.
   const canFinish = !first && actedCount > 0 && !viable.some((c) => c.score >= 3);

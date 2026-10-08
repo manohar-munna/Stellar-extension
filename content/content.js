@@ -156,7 +156,7 @@
     const hint = `${el.name} ${el.id} ${ac}`.toLowerCase();
     if (type === "password") return true;
     if (/cc-|one-time-code|current-password|new-password/.test(ac)) return true;
-    return /pass(word)?|pwd|otp|cvv|cvc|card.?num|iban|ssn|aadhaar|aadhar|secret|token|api.?key|pin\b/.test(hint);
+    return /pass(word)?|pwd|otp|cvv|cvc|card.?num|iban|ssn|aadhaar|aadhar|secret|token|api.?key|\bpin\b/.test(hint);
   }
 
   function scanElements() {
@@ -246,6 +246,9 @@
       category: "API_KEY",
       re: /\b(?:sk-[A-Za-z0-9_-]{16,}|AIza[0-9A-Za-z_-]{35}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/g,
     },
+    // UPI IDs (name@okaxis, …) and IFSC codes.
+    { category: "BANK_ACCOUNT", re: /\b[A-Za-z0-9._-]{2,}@(?:ok(?:axis|hdfcbank|icici|sbi)|upi|ybl|paytm|axl|ibl|apl)\b/gi },
+    { category: "BANK_ACCOUNT", re: /\b[A-Z]{4}0[A-Z0-9]{6}\b/g },
     { category: "EMAIL", re: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g },
     {
       category: "CREDIT_CARD",
@@ -261,10 +264,13 @@
     { category: "PHONE", re: /(?<!\w)\+\d{1,3}[ ().-]*\d{2,4}[ ().-]*\d{3,4}[ .-]*\d{3,4}(?!\d)/g },
     { category: "PHONE", re: /\(\d{3}\) ?\d{3}-\d{4}(?!\d)/g },
   ];
+  // A bare digit run is only an account number when its label says so.
+  const ACCOUNT_CONTEXT = /\b(?:bank|account|acct|a\/c)\b/i;
+  const ACCOUNT_NUMBER = /(?<![\d+])\d(?:[ -]?\d){8,17}(?!\d)/g;
 
   // `known` are the user's vault values ({tag, value}); they are redacted under
   // their own vault tag wherever they appear (e.g. after the agent typed them).
-  function findPiiInString(text, known = []) {
+  function findPiiInString(text, known = [], context = "") {
     const hits = [];
     for (const k of known) {
       let i = text.indexOf(k.value);
@@ -285,6 +291,15 @@
         hits.push({ category: p.category, start, end, value: m[0] });
       }
     }
+    if (ACCOUNT_CONTEXT.test(context) || ACCOUNT_CONTEXT.test(text)) {
+      ACCOUNT_NUMBER.lastIndex = 0;
+      let m;
+      while ((m = ACCOUNT_NUMBER.exec(text))) {
+        const start = m.index;
+        const end = start + m[0].length;
+        if (!hits.some((h) => start < h.end && end > h.start)) hits.push({ category: "BANK_ACCOUNT", start, end, value: m[0] });
+      }
+    }
     return hits;
   }
 
@@ -302,7 +317,8 @@
     if (/\b(name|given-name|family-name)\b/.test(ac)) return "PERSON_NAME";
     if (/bday/.test(ac)) return "DOB";
     if (/pass|pwd|secret|token|api.?key|\bpin\b/.test(hint)) return "PASSWORD";
-    if (/aadhaar|aadhar|\bpan\b|ssn|iban/.test(hint)) return "GOV_ID";
+    if (/aadhaar|aadhar|\bpan\b|ssn/.test(hint)) return "GOV_ID";
+    if (/iban|ifsc|\bupi\b|acc(?:oun)?t.?(?:no|num)/.test(hint)) return "BANK_ACCOUNT";
     return null;
   }
 
@@ -346,7 +362,10 @@
     while ((node = walker.nextNode()) && budget > 0) {
       const text = node.nodeValue;
       budget -= text.length;
-      const hits = findPiiInString(text, known);
+      // The label next to a value (e.g. <dt>Bank account</dt><dd>…</dd>) gives context.
+      const p = node.parentElement;
+      const label = (p.previousElementSibling?.textContent || "") + " " + (p.getAttribute("aria-label") || "");
+      const hits = findPiiInString(text, known, label.slice(0, 80));
       for (const h of hits) {
         const range = document.createRange();
         range.setStart(node, h.start);

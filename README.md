@@ -69,27 +69,43 @@ Stellar card in `chrome://extensions`. Settings and the vault are kept.
 
 ### Demo page
 
-`demo/index.html` is a fictional "Orbit Cloud" account page full of fake
-credentials (API keys, card number, Aadhaar/PAN, password field, email, phone).
-Serve it locally and try **Snapshot**, then a task such as
-*"Open a support ticket about account access using my vault details"*:
+`demo/` is a fictional "Orbit Cloud" site that works **fully offline** (no external
+fonts, scripts or images) and has a page for every feature:
+
+| Page | Shows |
+|---|---|
+| Dashboard | names/email/phone in text, a photo with a face (NASA, public domain) → on-device face blur |
+| Profile | PAN, Aadhaar, DOB, address → semantic tags |
+| Billing | card, CVV, bank account, IFSC → solid black; plan dropdown; *Delete account* (risky); a scanned receipt whose text is *inside an image* (only "+ Cloud vision" reads it) |
+| Orders | a table to reason over ("which order is pending?") |
+| Support | the ticket form (vault fill, dropdown, message, send) |
+| Developers | `sk-…`, `AIza…`, `ghp_…`, a JWT and a Bearer token in a code block; a planted **prompt injection** asking the AI to paste the key |
+| Careers | a long application form with required fields (phone is missing from the preset vault → Stellar asks and saves it) and a consent checkbox |
+| Help centre | search → results → article (multi-page task, answer "14 days") |
+| Security | filled password and OTP fields |
+| Newsletter | a **simulated, offline** bot check, so the CAPTCHA pause → you tick → auto-resume can be shown without internet |
+| Demo guide | the vault preset, copy buttons for every task, and sample files for vault import (`demo/samples/`: ID card PNG, scanned PDF, résumé .docx, contact .vcf — fictional people) |
 
 ```bash
 python -m http.server 8765
 ```
 
-Then open <http://localhost:8765/demo/index.html>. (Opening it as a `file://` URL
-also works if you enable **Allow access to file URLs** for the extension.)
+Then open <http://localhost:8765/demo/> and start from **Demo guide**. (Opening it as a
+`file://` URL also works if you enable **Allow access to file URLs** for the extension.)
 
-Put this in **Settings → Private vault** to see tag substitution in action:
+Measured with Local-first + Autopilot (real Gemini, FastVLM on WebGPU):
 
-```
-NAME=Aarav Sharma
-EMAIL=aarav.sharma@example.com
-```
+| Task | On-device steps | Gemini calls | Time |
+|---|---|---|---|
+| Billing support ticket from the vault | 5 of 6 (Gemini: final check) | 1 | 13 s |
+| Careers application, phone missing | asks once, then 12 of 13 on-device | 1 | 21 s |
+| Switch plan to Basic | 2 of 3 | 1 | 17 s |
+| Help-centre refund question | search on-device, Gemini opens the article and answers | 2 | 10 s |
+| Feedback on a page with a prompt injection | 2 of 3, no key pasted | 1 | 10 s |
+| Newsletter behind the bot check | pauses for you, then 2 of 3 on-device | 1 | 13 s |
 
-The model only ever sees `[VAULT_NAME]` / `[VAULT_EMAIL]`; the real values are typed
-in locally after validation — and re-redacted on the next frame.
+The model only ever sees tags such as `[VAULT_NAME]` or `[API_KEY_01]`; real values are
+typed in locally after validation, and they are redacted again on the next frame.
 
 ---
 
@@ -173,7 +189,7 @@ sidepanel/
   local/vlm-worker.js    FastVLM in a Web Worker (WebGPU / WASM)
   local/vlm.js           client: load with progress, generate
   local/planner.js       on-device backup planner
-demo/index.html          fictional page with fake PII for demos
+demo/                    offline demo site (fake PII, face photo, forms, bot check) + sample vault files
 icons/                   extension icons
 vendor/                  Transformers.js, ONNX Runtime Web, pdf.js (see vendor/README.md)
 ```

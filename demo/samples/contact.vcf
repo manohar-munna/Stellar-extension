@@ -1,0 +1,10 @@
+BEGIN:VCARD
+VERSION:3.0
+FN:Ananya Iyer
+EMAIL;TYPE=work:ananya@example.com
+TEL;TYPE=cell:+91 90000 12345
+ORG:Orbit Labs
+TITLE:Product Manager
+BDAY:1992-11-05
+ADR;TYPE=home:;;12 Park Street;Kolkata;WB;700016;India
+END:VCARD
