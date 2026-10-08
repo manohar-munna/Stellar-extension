@@ -58,7 +58,7 @@ function searchQuery(task) {
   return m ? m[1].trim() : null;
 }
 
-function describe(e) {
+export function describe(e) {
   if (e.kind === "INPUT") return `Type into "${e.label}"${e.filled ? " (filled)" : " (empty)"}`;
   if (e.kind === "SELECT") return `Choose an option in "${e.label}" (now: ${e.selected || "?"})`;
   if (e.kind === "CHECKBOX" || e.kind === "RADIO") return `Tick "${e.label}"`;
@@ -153,12 +153,29 @@ function messageFromTask(task) {
  * Decide the next action on-device.
  * @returns {Promise<{observation, thought, status, action, local: true, model, latencyMs}>}
  */
-export async function localDecide({ task, elements, history, vault, imageBlob }) {
-  const t0 = performance.now();
-  const vaultTags = vault.map((v) => v.tag);
+/** The candidate shortlist the on-device model chooses from (shared with the dataset exporter). */
+export function buildShortlist({ task, elements, history, vaultTags }) {
   const ranked = rankCandidates({ task, elements, history, vaultTags });
   const viable = ranked.filter((c) => c.score > 0);
   const actedCount = actedTags(history).size;
+  // "Goal complete" is only an option once no strongly-matching action remains.
+  const canFinish = actedCount > 0 && !viable.some((c) => c.score >= 3);
+  return { ranked, viable, shortlist: viable.slice(0, 5), canFinish, actedCount };
+}
+
+/** Multiple-choice prompt for the shortlist (shared with the dataset exporter). */
+export function choicePrompt({ task, history, shortlist, canFinish }) {
+  return `You are helping a user on a web page. Goal: ${task}
+Already done: ${history.length ? history.slice(-6).map((h) => (h.text || h).replace(/^Step \d+: /, "")).join("; ") : "nothing yet"}.
+Which ONE action should happen next?
+${shortlist.map((c, i) => `${i + 1}. ${describe(c.e)}`).join("\n")}${canFinish ? `\n${shortlist.length + 1}. The goal is complete` : ""}
+Answer with the number only.`;
+}
+
+export async function localDecide({ task, elements, history, vault, imageBlob }) {
+  const t0 = performance.now();
+  const vaultTags = vault.map((v) => v.tag);
+  const { viable, shortlist, canFinish, actedCount } = buildShortlist({ task, elements, history, vaultTags });
 
   const finish = (answer, why) => ({
     observation: why,
@@ -180,14 +197,7 @@ export async function localDecide({ task, elements, history, vault, imageBlob })
   }
 
   // FastVLM chooses among the top candidates while looking at the sanitized frame.
-  // "Goal complete" is only an option once no strongly-matching action remains.
-  const shortlist = viable.slice(0, 5);
-  const canFinish = actedCount > 0 && !viable.some((c) => c.score >= 3);
-  const q = `You are helping a user on a web page. Goal: ${task}
-Already done: ${history.length ? history.slice(-6).map((h) => h.text.replace(/^Step \d+: /, "")).join("; ") : "nothing yet"}.
-Which ONE action should happen next?
-${shortlist.map((c, i) => `${i + 1}. ${describe(c.e)}`).join("\n")}${canFinish ? `\n${shortlist.length + 1}. The goal is complete` : ""}
-Answer with the number only.`;
+  const q = choicePrompt({ task, history, shortlist, canFinish });
   let choice = shortlist[0];
   let vlmNote = "heuristic top choice";
   try {

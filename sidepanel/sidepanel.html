@@ -154,6 +154,19 @@
         </fieldset>
 
         <fieldset class="field">
+          <legend>Training data</legend>
+          <label class="check"><input id="collectTraining" type="checkbox" /> <span>Record Gemini steps as fine-tuning examples for the on-device model</span></label>
+          <small class="muted">Stores only what Gemini already received — the sanitized frame, scrubbed text and its tag-based action — in this browser until you export it.</small>
+          <div class="inline">
+            <span id="trainStats" class="muted sm">–</span>
+          </div>
+          <div class="inline">
+            <button id="trainExport" class="btn ghost sm" type="button">Export dataset (.zip)</button>
+            <button id="trainClear" class="btn ghost sm" type="button">Clear</button>
+          </div>
+        </fieldset>
+
+        <fieldset class="field">
           <legend>Pace</legend>
           <label class="radio row"><input type="radio" name="pace" value="guided" /><span>Guided — pause on each stage</span></label>
           <label class="radio row"><input type="radio" name="pace" value="fast" /><span>Fast</span></label>
