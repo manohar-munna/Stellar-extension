@@ -81,6 +81,8 @@
       </main>
     </div>
 
+    <button id="followBtn" class="follow-btn" hidden>↓ Follow live</button>
+
     <footer class="foot">
       <a href="https://stellarai.site/" target="_blank" rel="noopener">stellarai.site</a>
       <span class="sep">·</span>
@@ -131,6 +133,12 @@
           <legend>Redaction style</legend>
           <label class="radio row"><input type="radio" name="redactStyle" value="solid" /><span>Solid mask + tag</span></label>
           <label class="radio row"><input type="radio" name="redactStyle" value="blur" /><span>Blur + tag</span></label>
+        </fieldset>
+
+        <fieldset class="field">
+          <legend>Pace</legend>
+          <label class="radio row"><input type="radio" name="pace" value="guided" /><span>Guided — pause on each stage</span></label>
+          <label class="radio row"><input type="radio" name="pace" value="fast" /><span>Fast</span></label>
         </fieldset>
 
         <label class="check"><input id="askRisky" type="checkbox" /> <span>Ask before risky actions (pay, delete, submit, filling vault data…)</span></label>

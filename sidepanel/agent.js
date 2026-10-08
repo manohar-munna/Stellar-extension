@@ -205,7 +205,7 @@ export class StellarAgent {
         const bitmap = await loadBitmap(rawDataUrl);
         const rawCanvas = toCanvas(bitmap);
         const rawPreview = encodeJpeg(rawCanvas, 900, 0.8);
-        ui.card(S, "capture", {
+        await ui.card(S, "capture", {
           ms: Math.round(performance.now() - t0),
           image: rawPreview.dataUrl,
           url: scan.url,
@@ -254,7 +254,7 @@ export class StellarAgent {
         const regions = buildRegions({ domPii: scan.pii, vision, viewport: scan.viewport });
         const secrets = knownSecrets(regions, vault);
         const detectCanvas = renderDetection(bitmap, scan.viewport, regions);
-        ui.card(S, "detect", {
+        await ui.card(S, "detect", {
           ms: Math.round(performance.now() - t1),
           mode: settings.detector,
           domCount: scan.pii.length,
@@ -275,7 +275,7 @@ export class StellarAgent {
         });
         const sanitizedCanvas = renderSanitized(bitmap, scan.viewport, regions, elements, { style: settings.redactStyle });
         const sanitized = encodeJpeg(sanitizedCanvas, 1280, 0.85);
-        ui.card(S, "redact", {
+        await ui.card(S, "redact", {
           ms: Math.round(performance.now() - t2),
           image: sanitized.dataUrl,
           regions,
@@ -313,7 +313,7 @@ export class StellarAgent {
           ],
           generationConfig: { temperature: 0.2, responseMimeType: "application/json", responseSchema: "<action schema>" },
         };
-        ui.card(S, "send", {
+        await ui.card(S, "send", {
           payload: payloadPreview,
           prompt,
           image: sanitized.dataUrl,
@@ -350,7 +350,7 @@ export class StellarAgent {
             onRetry: (ms) => ui.status(`Gemini is busy — retrying in ${Math.round(ms / 1000)}s…`),
           });
           decision = res.json;
-          ui.card(S, "reason", { model: res.model, latencyMs: res.latencyMs, usage: res.usage, decision, keyIndex: res.keyIndex, keyCount: res.keyCount });
+          await ui.card(S, "reason", { model: res.model, latencyMs: res.latencyMs, usage: res.usage, decision, keyIndex: res.keyIndex, keyCount: res.keyCount });
         } catch (e) {
           if (this.stopped) throw new StopError();
           throw new Error(`Reasoning call failed: ${e.message}`);
@@ -392,20 +392,20 @@ export class StellarAgent {
         let approved = v.verdict === "allow";
         let userNote = "";
         if (v.verdict === "confirm") {
-          ui.card(S, "validate", { verdict: v.verdict, checks: v.checks, reason: v.reason, pending: true, summary });
+          await ui.card(S, "validate", { verdict: v.verdict, checks: v.checks, reason: v.reason, pending: true, summary });
           await this.cs(tabId, { op: "overlay", visible: true, message: "Waiting for your approval in the Stellar panel" });
           approved = await ui.confirm(S, v.reason);
           this.checkStop();
           userNote = approved ? "approved by user" : "rejected by user";
         } else {
-          ui.card(S, "validate", { verdict: v.verdict, checks: v.checks, reason: v.reason, summary });
+          await ui.card(S, "validate", { verdict: v.verdict, checks: v.checks, reason: v.reason, summary });
         }
 
         if (v.verdict === "block" || !approved) {
           consecutiveBlocks++;
           const why = v.verdict === "block" ? `blocked by local validator: ${v.reason}` : "rejected by the user — choose a different approach or ask_user";
           history.push({ text: `Step ${step}: ${summary} → NOT EXECUTED (${why})`, sig: v.sig });
-          ui.card(S, "execute", { skipped: true, detail: why });
+          await ui.card(S, "execute", { skipped: true, detail: why });
           if (consecutiveBlocks >= 3) throw new Error("Stopped after 3 consecutive blocked/rejected actions.");
           continue;
         }
@@ -445,7 +445,7 @@ export class StellarAgent {
           await this.settle(tabId);
           result.detail += " (opened a new tab — following it)";
         }
-        ui.card(S, "execute", { ms: Math.round(performance.now() - t3), ...result, summary, userNote });
+        await ui.card(S, "execute", { ms: Math.round(performance.now() - t3), ...result, summary, userNote });
         history.push({ text: `Step ${step}: ${summary} → ${result.ok ? "ok" : "FAILED"}: ${result.detail}`, sig: v.sig });
       }
       ui.finish({ ok: false, message: `Reached the step limit (${maxSteps}). Increase it in Settings or refine the task.` });

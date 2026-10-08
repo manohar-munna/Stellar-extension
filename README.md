@@ -52,6 +52,7 @@ so you can show people exactly what leaves the machine.
   Arkose or Cloudflare “Just a moment…” check is on screen, the agent pauses *before* any model call, shows a
   **Human verification needed** card and an on-page message, and resumes by itself as soon as the check is
   cleared (or when you click *I’ve done it — continue*). Model actions that target a CAPTCHA widget are blocked.
+- **Smooth follow & guided pace**: while a task runs, the panel glides to each new card (no jumps) and the newest card glows briefly. Scroll up to read and following pauses — press **↓ Follow live** or scroll to the bottom to resume. With **Settings → Pace → Guided** (default) each stage stays on screen for about a second before the next one starts, so people can follow along; choose **Fast** for full speed.
 - **Theme**: follows your system light/dark setting; the ◐ button in the header cycles System → Light → Dark.
 
 ### Demo page

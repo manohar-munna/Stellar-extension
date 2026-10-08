@@ -14,6 +14,9 @@ export const DEFAULTS = {
   maxSteps: 15,
   presenter: false,
   theme: "system", // "system" | "light" | "dark"
+  // "guided" pauses briefly after every stage so people can follow along;
+  // "fast" runs at full speed.
+  pace: "guided",
   vault: "",
 };
 

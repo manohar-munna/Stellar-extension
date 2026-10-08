@@ -36,14 +36,104 @@ let pending = [];
 
 // ------------------------------------------------------------- utilities
 
-function nearBottom() {
-  return window.innerHeight + window.scrollY >= document.body.scrollHeight - 160;
+// ------------------------------------------------------- smooth follow
+// While a run is on screen the panel glides to each new card instead of
+// jumping. If the user scrolls up to read, following pauses until they press
+// "Follow live" or scroll back to the bottom.
+
+const follow = { on: true, raf: 0, gliding: false, target: null };
+const followBtn = document.getElementById("followBtn");
+
+function atBottom() {
+  return window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 40;
 }
 
+function stickyOffset() {
+  const bar = document.getElementById("runbar");
+  return (bar && !bar.hidden ? bar.getBoundingClientRect().height : 0) + 10;
+}
+
+const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+/** Ease the window so `node`'s top settles just below the sticky tab bar.
+ *  The target is re-measured every frame, so folding steps don't cause jumps. */
+function glideTo(node, duration = 850) {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) duration = 1;
+  if (!node?.isConnected || !node.offsetParent) return;
+  cancelAnimationFrame(follow.raf);
+  follow.target = node;
+  follow.gliding = true;
+  const startY = window.scrollY;
+  const t0 = performance.now();
+  const frame = (now) => {
+    if (follow.target !== node) return;
+    const maxY = document.documentElement.scrollHeight - window.innerHeight;
+    // Tall cards: align their top; short ones: keep them fully in view.
+    const r = node.getBoundingClientRect();
+    let goal = window.scrollY + r.top - stickyOffset();
+    if (r.height < window.innerHeight * 0.6) goal = Math.max(goal - (window.innerHeight - stickyOffset() - r.height) * 0.35, 0);
+    goal = Math.min(Math.max(goal, 0), Math.max(maxY, 0));
+    const t = Math.min(1, (now - t0) / duration);
+    window.scrollTo(0, startY + (goal - startY) * easeInOut(t));
+    if (t < 1) follow.raf = requestAnimationFrame(frame);
+    else follow.gliding = false;
+  };
+  follow.raf = requestAnimationFrame(frame);
+}
+
+function setFollow(on) {
+  follow.on = on;
+  followBtn.hidden = on || !activeRun;
+  if (!on) {
+    cancelAnimationFrame(follow.raf);
+    follow.gliding = false;
+  }
+}
+
+// Any deliberate user scroll upward pauses following; reaching the bottom resumes it.
+window.addEventListener(
+  "wheel",
+  (e) => {
+    if (e.deltaY < 0 && activeRun) setFollow(false);
+    else if (atBottom() && !follow.on) setFollow(true);
+  },
+  { passive: true }
+);
+window.addEventListener("keydown", (e) => {
+  if (["PageUp", "ArrowUp", "Home"].includes(e.key) && activeRun && !e.target.closest("textarea, input")) setFollow(false);
+});
+window.addEventListener("touchmove", () => activeRun && setFollow(false), { passive: true });
+followBtn.addEventListener("click", () => {
+  setFollow(true);
+  const run = activeRun;
+  const last = run?.steps[run.steps.length - 1];
+  glideTo(last?.body.lastElementChild || last?.el || run?.el);
+});
+
 function append(parent, node) {
-  const stick = nearBottom();
   parent.append(node);
-  if (stick) node.scrollIntoView({ block: "end", behavior: "smooth" });
+  if (follow.on && node.offsetParent) {
+    node.classList.add("fresh");
+    setTimeout(() => node.classList.remove("fresh"), 1600);
+    glideTo(node);
+  }
+}
+
+// Guided pace: hold each stage on screen for a moment so people can follow.
+const DWELL_MS = { capture: 1100, detect: 1400, redact: 1600, send: 1200, reason: 1500, validate: 1000, execute: 900 };
+const dwellers = new Set();
+
+function dwell(run, stage) {
+  if (run?.pace !== "guided" || !DWELL_MS[stage]) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(t);
+      dwellers.delete(done);
+      resolve();
+    };
+    const t = setTimeout(done, DWELL_MS[stage]);
+    dwellers.add(done);
+  });
 }
 
 function tagChip(tag, category) {
@@ -266,6 +356,7 @@ function makeRun({ task, snapshot, settings, maxSteps }) {
     task,
     snapshot,
     vision: settings.detector === "vision",
+    pace: settings.pace || "guided",
     maxSteps,
     status: "running",
     stage: null,
@@ -333,7 +424,12 @@ function selectRun(run) {
     r.el.classList.toggle("sel", r === run);
     r.tab.classList.toggle("sel", r === run);
   }
-  run?.tab.scrollIntoView({ inline: "nearest", block: "nearest" });
+  // Scroll only the tab strip sideways; never move the page vertically.
+  if (run) {
+    const strip = run.tab.parentElement;
+    const l = run.tab.offsetLeft - strip.offsetLeft;
+    if (l < strip.scrollLeft || l + run.tab.offsetWidth > strip.scrollLeft + strip.clientWidth) strip.scrollTo({ left: l - 12, behavior: "smooth" });
+  }
 }
 
 function closeRun(run) {
@@ -382,7 +478,8 @@ function makeStep(run, n) {
   step.bar = h("div", { class: "stagebar" });
   step.stageLbl = h("span", { class: "stage-lbl" });
   step.brief = h("div", { class: "brief" }, h("div", { class: "stage-row" }, step.bar, step.stageLbl));
-  step.body = h("div", { class: "step-body" });
+  step.body = h("div", { class: "step-inner" });
+  step.fold = h("div", { class: "step-body" }, step.body);
   step.el = h(
     "section",
     { class: "step live" },
@@ -395,7 +492,7 @@ function makeStep(run, n) {
       h("span", { class: "chev" }, "▾")
     ),
     step.brief,
-    step.body
+    step.fold
   );
   renderStageBar(run, step);
   return step;
@@ -431,7 +528,7 @@ function renderStageBar(run, step) {
 function jumpTo(step, stage) {
   step.el.classList.remove("collapsed");
   const target = step.body.querySelector(`.card[data-stage="${stage}"]`) || step.body;
-  target.scrollIntoView({ block: "start", behavior: "smooth" });
+  setTimeout(() => glideTo(target, 700), 50); // let the fold open first
 }
 
 /** Create or update one line of the step brief (hidden / sent / saw). */
@@ -472,6 +569,7 @@ const ui = {
     $("#intro")?.remove();
     activeRun = makeRun({ task, snapshot, settings, maxSteps });
     selectRun(activeRun);
+    setFollow(true);
     setRunning(true);
     this.status(snapshot ? "Taking a privacy snapshot…" : "Starting…");
   },
@@ -548,6 +646,8 @@ const ui = {
     this.brief(run, S, stage, data);
     renderStageBar(run, S);
     run.log.steps[run.log.steps.length - 1].cards.push({ stage, ...exportable(stage, data) });
+    if (ph && follow.on) glideTo(node);
+    return data.pending ? Promise.resolve() : dwell(run, stage);
   },
 
   /** Fill the step's short brief from a stage's data. */
@@ -608,7 +708,7 @@ const ui = {
       if (selectedRun !== run) selectRun(run);
       S.el.classList.remove("collapsed");
       (S.lastCard?.querySelector(".card-b") || S.body).append(box);
-      box.scrollIntoView({ block: "center", behavior: "smooth" });
+      if (follow.on) glideTo(box);
       this.status("Waiting for your approval…");
     });
   },
@@ -686,7 +786,6 @@ const ui = {
     if (selectedRun !== run) selectRun(run);
     S.el.classList.remove("collapsed");
     append(S.body, node);
-    node.scrollIntoView({ block: "center", behavior: "smooth" });
     this.status(`Waiting for you to complete the ${kind}…`);
     return { done, resolve: finish };
   },
@@ -694,6 +793,7 @@ const ui = {
   cancelPending() {
     for (const p of [...pending]) p();
     pending = [];
+    for (const d of [...dwellers]) d();
   },
 
   finish({ ok, message }) {
@@ -712,7 +812,8 @@ const ui = {
     activeRun = null;
     setRunStatus(run, ok ? "done" : "stopped");
     updateRunStats(run);
-    if (run === selectedRun) run.el.lastChild.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    followBtn.hidden = true;
+    if (run === selectedRun && follow.on) glideTo(run.el.lastChild, 900);
     this.status("");
     setRunning(false);
   },
@@ -822,6 +923,7 @@ async function openSettings() {
   $("#detectModel").value = s.detectModel;
   document.querySelector(`input[name=detector][value=${s.detector}]`).checked = true;
   document.querySelector(`input[name=redactStyle][value=${s.redactStyle}]`).checked = true;
+  document.querySelector(`input[name=pace][value=${s.pace || "guided"}]`).checked = true;
   $("#askRisky").checked = s.askRisky;
   $("#maxSteps").value = s.maxSteps;
   $("#vault").value = s.vault;
@@ -867,6 +969,7 @@ $("#saveSettings").addEventListener("click", async () => {
     detectModel: $("#detectModel").value.trim() || DEFAULTS.detectModel,
     detector: document.querySelector("input[name=detector]:checked")?.value || "vision",
     redactStyle: document.querySelector("input[name=redactStyle]:checked")?.value || "solid",
+    pace: document.querySelector("input[name=pace]:checked")?.value || "guided",
     askRisky: $("#askRisky").checked,
     maxSteps: Math.max(1, Math.min(50, parseInt($("#maxSteps").value, 10) || 15)),
     vault: $("#vault").value,
