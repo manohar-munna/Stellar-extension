@@ -97,106 +97,152 @@
       <div class="drawer-inner">
         <div class="drawer-h">
           <h2>Settings</h2>
-          <button id="closeSettings" class="icon-btn" title="Close">✕</button>
+          <button id="closeSettings" class="icon-btn" title="Close" aria-label="Close settings">✕</button>
         </div>
 
-        <label class="field">
-          <span>Gemini API key(s)</span>
-          <div class="inline">
-            <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…" />
-            <button id="toggleKey" class="btn ghost sm" type="button">Show</button>
+        <!-- ------------------------------------------------------------ Gemini -->
+        <section class="set-card">
+          <h3>Gemini</h3>
+          <div class="set-field">
+            <label class="set-label" for="apiKey">API key(s)</label>
+            <div class="input-row">
+              <input id="apiKey" class="input" type="password" autocomplete="off" spellcheck="false" placeholder="AIza… (comma-separate several)" />
+              <button id="toggleKey" class="btn ghost sm" type="button">Show</button>
+            </div>
+            <p class="set-hint">Stored only in this browser. Rate-limited or rejected keys are rotated out automatically. Get one at aistudio.google.com.</p>
           </div>
-          <small>Stored only in this browser (chrome.storage.local). Several keys can be separated with commas — rate-limited or rejected keys are rotated out automatically. Get one at aistudio.google.com.</small>
-        </label>
-        <div class="inline">
-          <button id="testKey" class="btn ghost sm" type="button">Test key &amp; load models</button>
-          <span id="keyStatus" class="muted sm"></span>
-        </div>
+          <div class="action-row">
+            <button id="testKey" class="btn ghost sm" type="button">Test keys &amp; load models</button>
+            <span id="keyStatus" class="set-status"></span>
+          </div>
+          <div class="set-grid">
+            <div class="set-field">
+              <label class="set-label" for="reasonModel">Reasoning model</label>
+              <input id="reasonModel" class="input" list="modelList" spellcheck="false" />
+            </div>
+            <div class="set-field">
+              <label class="set-label" for="detectModel">Vision detector model</label>
+              <input id="detectModel" class="input" list="modelList" spellcheck="false" />
+            </div>
+          </div>
+          <datalist id="modelList"></datalist>
+        </section>
 
-        <label class="field">
-          <span>Reasoning model</span>
-          <input id="reasonModel" list="modelList" spellcheck="false" />
-        </label>
-        <label class="field">
-          <span>Vision detector model</span>
-          <input id="detectModel" list="modelList" spellcheck="false" />
-        </label>
-        <datalist id="modelList"></datalist>
+        <!-- ----------------------------------------------------------- Privacy -->
+        <section class="set-card">
+          <h3>Privacy</h3>
+          <div class="set-field">
+            <span class="set-label">PII detection</span>
+            <div class="segmented" role="radiogroup" aria-label="PII detection">
+              <label><input type="radio" name="detector" value="vision" /><span>Vision + DOM</span></label>
+              <label><input type="radio" name="detector" value="dom" /><span>DOM only</span></label>
+            </div>
+            <p class="set-hint opt" data-name="detector" data-value="vision">Best coverage (faces, names, text in images). The raw frame goes to the Gemini detector.</p>
+            <p class="set-hint opt" data-name="detector" data-value="dom">The raw frame never leaves the device. Catches fields, emails, phones, cards, IDs and keys in page text.</p>
+          </div>
+          <div class="set-field">
+            <span class="set-label">Redaction style</span>
+            <div class="segmented" role="radiogroup" aria-label="Redaction style">
+              <label><input type="radio" name="redactStyle" value="solid" /><span>Solid mask</span></label>
+              <label><input type="radio" name="redactStyle" value="blur" /><span>Blur</span></label>
+            </div>
+            <p class="set-hint opt" data-name="redactStyle" data-value="solid">Pixels are replaced with a dark box and its tag. Safest.</p>
+            <p class="set-hint opt" data-name="redactStyle" data-value="blur">Heavy blur plus the tag. Softer look, slightly less safe for short text.</p>
+          </div>
+          <label class="switch-row">
+            <span><b>Ask before risky actions</b><small>Pay, delete, submit, filling vault data.</small></span>
+            <input id="askRisky" class="switch" type="checkbox" />
+          </label>
+        </section>
 
-        <fieldset class="field">
-          <legend>PII detection</legend>
-          <label class="radio"><input type="radio" name="detector" value="vision" />
-            <span><b>Gemini vision + DOM</b><small>Best coverage (faces, names, text in images). The raw frame goes to the detector model — the cloud stand-in for the on-device ONNX detector in the design.</small></span></label>
-          <label class="radio"><input type="radio" name="detector" value="dom" />
-            <span><b>DOM only</b><small>Raw frame never leaves the device. Catches fields, emails, phones, cards, IDs and keys in page text.</small></span></label>
-        </fieldset>
-
-        <fieldset class="field">
-          <legend>Redaction style</legend>
-          <label class="radio row"><input type="radio" name="redactStyle" value="solid" /><span>Solid mask + tag</span></label>
-          <label class="radio row"><input type="radio" name="redactStyle" value="blur" /><span>Blur + tag</span></label>
-        </fieldset>
-
-        <fieldset class="field">
-          <legend>On-device model</legend>
-          <div class="local-card">
-            <div class="local-head"><b>FastVLM-0.5B</b><span class="muted sm">ONNX · WebGPU · ~670 MB, downloaded once and cached</span></div>
-            <div class="local-status" id="localStatus">Not loaded</div>
+        <!-- ---------------------------------------------------- On-device model -->
+        <section class="set-card">
+          <h3>On-device model</h3>
+          <div class="model-box">
+            <div class="model-head">
+              <b>FastVLM-0.5B</b>
+              <span class="set-hint">ONNX · WebGPU · ~670 MB, downloaded once</span>
+            </div>
+            <div class="model-status">
+              <span class="local-status" id="localStatus">Not loaded</span>
+              <button id="localLoad" class="btn ghost sm" type="button">Download &amp; load</button>
+            </div>
             <div class="progress"><i id="localBar"></i></div>
-            <button id="localLoad" class="btn ghost sm" type="button">Download &amp; load</button>
           </div>
-          <label class="radio"><input type="radio" name="localBackup" value="auto" />
-            <span><b>Backup</b><small>Gemini runs the task; if it fails, the on-device model takes over so nothing breaks.</small></span></label>
-          <label class="radio"><input type="radio" name="localBackup" value="always" />
-            <span><b>On-device only</b><small>Nothing is sent to the cloud. Works best for form-style tasks.</small></span></label>
-          <label class="radio"><input type="radio" name="localBackup" value="off" /><span><b>Off</b></span></label>
-          <label class="check"><input id="localPreload" type="checkbox" /> <span>Load it in the background when the panel opens (after the first download)</span></label>
-        </fieldset>
+          <div class="set-field">
+            <span class="set-label">Mode</span>
+            <div class="segmented three" role="radiogroup" aria-label="On-device mode">
+              <label><input type="radio" name="localBackup" value="auto" /><span>Backup</span></label>
+              <label><input type="radio" name="localBackup" value="always" /><span>On-device only</span></label>
+              <label><input type="radio" name="localBackup" value="off" /><span>Off</span></label>
+            </div>
+            <p class="set-hint opt" data-name="localBackup" data-value="auto">Gemini runs the task; if it fails, the on-device model takes over so nothing breaks.</p>
+            <p class="set-hint opt" data-name="localBackup" data-value="always">Nothing is sent to the cloud. Works best for form-style tasks.</p>
+            <p class="set-hint opt" data-name="localBackup" data-value="off">Gemini only. A Gemini failure stops the run.</p>
+          </div>
+          <label class="switch-row">
+            <span><b>Preload when the panel opens</b><small>After the first download, warm it up in the background.</small></span>
+            <input id="localPreload" class="switch" type="checkbox" />
+          </label>
+        </section>
 
-        <fieldset class="field">
-          <legend>Training data</legend>
-          <label class="check"><input id="collectTraining" type="checkbox" /> <span>Record Gemini steps as fine-tuning examples for the on-device model</span></label>
-          <small class="muted">Stores only what Gemini already received — the sanitized frame, scrubbed text and its tag-based action — in this browser until you export it.</small>
-          <div class="inline">
-            <span id="trainStats" class="muted sm">–</span>
-          </div>
-          <div class="inline">
+        <!-- ----------------------------------------------------- Training data -->
+        <section class="set-card">
+          <h3>Training data</h3>
+          <label class="switch-row">
+            <span><b>Record Gemini steps</b><small>Fine-tuning examples for the on-device model. Stores only what Gemini already received (sanitized frame, scrubbed text, tag-based action), in this browser until you export it.</small></span>
+            <input id="collectTraining" class="switch" type="checkbox" />
+          </label>
+          <span id="trainStats" class="set-status">–</span>
+          <div class="btn-pair">
             <button id="trainExport" class="btn ghost sm" type="button">Export dataset (.zip)</button>
             <button id="trainClear" class="btn ghost sm" type="button">Clear</button>
           </div>
-        </fieldset>
+        </section>
 
-        <fieldset class="field">
-          <legend>Pace</legend>
-          <label class="radio row"><input type="radio" name="pace" value="guided" /><span>Guided — pause on each stage</span></label>
-          <label class="radio row"><input type="radio" name="pace" value="fast" /><span>Fast</span></label>
-        </fieldset>
-
-        <label class="check"><input id="askRisky" type="checkbox" /> <span>Ask before risky actions (pay, delete, submit, filling vault data…)</span></label>
-
-        <label class="field">
-          <span>Max steps per run</span>
-          <input id="maxSteps" type="number" min="1" max="50" />
-        </label>
-
-        <label class="field">
-          <span>Private vault</span>
-          <textarea id="vault" rows="5" spellcheck="false" placeholder="EMAIL=you@example.com&#10;PHONE=+91 98765 43210&#10;NAME=Your Name"></textarea>
-          <small>One <code>KEY=value</code> per line. The AI only sees <code>[VAULT_EMAIL]</code>-style tags; values are filled in locally after validation.</small>
-        </label>
-        <div class="vault-import">
-          <div class="inline">
-            <button id="vaultImportBtn" class="btn ghost sm" type="button">Import from file…</button>
-            <span class="muted sm">ID card photo, PDF, résumé (.docx), contact card (.vcf), .txt/.csv/.json</span>
+        <!-- ------------------------------------------------------------- Agent -->
+        <section class="set-card">
+          <h3>Agent</h3>
+          <div class="set-grid">
+            <div class="set-field">
+              <span class="set-label">Pace</span>
+              <div class="segmented" role="radiogroup" aria-label="Pace">
+                <label><input type="radio" name="pace" value="guided" /><span>Guided</span></label>
+                <label><input type="radio" name="pace" value="fast" /><span>Fast</span></label>
+              </div>
+            </div>
+            <div class="set-field">
+              <label class="set-label" for="maxSteps">Max steps per run</label>
+              <input id="maxSteps" class="input" type="number" min="1" max="50" />
+            </div>
           </div>
-          <input id="vaultFile" type="file" multiple accept="image/*,.pdf,.docx,.txt,.csv,.json,.vcf" hidden />
-          <label class="check sm"><input id="vaultGemini" type="checkbox" /> <span>Extract with Gemini instead (uploads the file to Google)</span></label>
+          <p class="set-hint opt" data-name="pace" data-value="guided">Pauses about a second on every stage so viewers can follow along.</p>
+          <p class="set-hint opt" data-name="pace" data-value="fast">Runs at full speed.</p>
+        </section>
+
+        <!-- ------------------------------------------------------ Private vault -->
+        <section class="set-card">
+          <h3>Private vault</h3>
+          <div class="set-field">
+            <label class="set-label" for="vault">Your details</label>
+            <textarea id="vault" class="input mono" rows="5" spellcheck="false" placeholder="EMAIL=you@example.com&#10;PHONE=+91 98765 43210&#10;NAME=Your Name"></textarea>
+            <p class="set-hint">One <code>KEY=value</code> per line. The AI only sees <code>[VAULT_EMAIL]</code>-style tags; values are filled in locally after validation.</p>
+          </div>
+          <div class="import-box">
+            <button id="vaultImportBtn" class="btn ghost sm block" type="button">Import from file…</button>
+            <p class="set-hint center">ID card photo, PDF, résumé (.docx), contact card (.vcf), .txt, .csv, .json</p>
+            <input id="vaultFile" type="file" multiple accept="image/*,.pdf,.docx,.txt,.csv,.json,.vcf" hidden />
+          </div>
+          <label class="switch-row">
+            <span><b>Extract with Gemini instead</b><small>Uploads the file to Google. Off = read on this device.</small></span>
+            <input id="vaultGemini" class="switch" type="checkbox" />
+          </label>
           <div id="vaultReview"></div>
-        </div>
+        </section>
 
         <div class="drawer-actions">
-          <button id="saveSettings" class="btn primary">Save</button>
-          <span id="saveStatus" class="muted sm"></span>
+          <span id="saveStatus" class="set-status"></span>
+          <button id="saveSettings" class="btn primary">Save settings</button>
         </div>
       </div>
     </div>

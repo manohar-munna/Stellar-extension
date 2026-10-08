@@ -12,3 +12,7 @@ Thumbs.db
 .claude/
 node_modules/
 *.zip
+
+# Generated training runs (datasets, browser profiles, caches)
+training/data/
+training/__pycache__/
