@@ -146,7 +146,10 @@
     if (text) return clip(text);
     const img = el.querySelector("img[alt], svg[aria-label], [title]");
     if (img) return clip(collapse(img.getAttribute("alt") || img.getAttribute("aria-label") || img.getAttribute("title")));
-    return clip(collapse(el.title || ""));
+    if (el.title) return clip(collapse(el.title));
+    // Icon-only buttons often carry a test id such as "console-run-button".
+    const hint = el.getAttribute("data-e2e-locator") || el.getAttribute("data-testid") || el.getAttribute("data-cy") || el.id || "";
+    return clip(collapse(hint.replace(/[-_]+/g, " ")));
   }
 
   function isSensitiveField(el) {
@@ -159,12 +162,36 @@
     return /pass(word)?|pwd|otp|cvv|cvc|card.?num|iban|ssn|aadhaar|aadhar|secret|token|api.?key|\bpin\b/.test(hint);
   }
 
+  // Code editors keep their real input in a hidden 1-px textarea (Monaco) or a
+  // contenteditable deep inside (CodeMirror 6), so they are tagged as one
+  // INPUT on the visible editor box instead.
+  const CODE_EDITORS = ".monaco-editor, .CodeMirror, .cm-editor, .ace_editor";
+  function editorKind(el) {
+    if (el.classList.contains("monaco-editor")) return "Monaco";
+    if (el.classList.contains("CodeMirror") || el.classList.contains("cm-editor")) return "CodeMirror";
+    if (el.classList.contains("ace_editor")) return "Ace";
+    return null;
+  }
+  function editorName(el) {
+    const first = el.querySelector(".view-line, .CodeMirror-line, .cm-line, .ace_line");
+    const preview = collapse(first?.textContent || "").slice(0, 40);
+    return `Code editor (${editorKind(el)})${preview ? ` — starts "${preview}"` : ""}`;
+  }
+
   function scanElements() {
     const candidates = [];
     const seen = new Set();
+    for (const el of document.querySelectorAll(CODE_EDITORS)) {
+      if (el.parentElement?.closest(CODE_EDITORS)) continue; // outermost editor box only
+      const r = el.getBoundingClientRect();
+      if (r.width < 40 || r.height < 20 || !intersectsViewport(r) || !isRendered(el)) continue;
+      seen.add(el);
+      candidates.push({ el, r });
+    }
     for (const el of document.querySelectorAll(INTERACTIVE_SELECTOR)) {
       if (seen.has(el)) continue;
       seen.add(el);
+      if (el.closest(CODE_EDITORS)) continue; // the editor box stands for its insides
       const r = el.getBoundingClientRect();
       if (r.width < 4 || r.height < 4 || !intersectsViewport(r)) continue;
       if (!isRendered(el) || !isTopMost(el, r)) continue;
@@ -191,7 +218,8 @@
 
     elementMap = new Map();
     return limited.map(({ el, r }) => {
-      const kind = kindOf(el);
+      const editor = editorKind(el);
+      const kind = editor ? "INPUT" : kindOf(el);
       let tag = tagOf.get(el);
       if (!tag || !tag.startsWith(`${kind}_`)) {
         tagCounters[kind] = (tagCounters[kind] || 0) + 1;
@@ -202,7 +230,7 @@
       const info = {
         tag,
         kind,
-        name: nameOf(el),
+        name: editor ? editorName(el) : nameOf(el),
         rect: rectOf(r),
         disabled: !!(el.disabled || el.getAttribute("aria-disabled") === "true"),
         sensitive: isSensitiveField(el),
@@ -212,6 +240,11 @@
       if (autofillHidden(el)) {
         info.filled = true;
         info.autofilled = true;
+      }
+      if (editor) {
+        info.editor = editor;
+        info.filled = collapse(el.innerText || "").length > 0;
+        el.dataset.stellarTag = tag; // lets the page-world editor API call find this box
       }
       if (el.required || el.getAttribute("aria-required") === "true" || /\*\s*$/.test(info.name)) info.required = true;
       if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) info.checked = el.checked;
@@ -674,7 +707,9 @@
       editable:
         el instanceof HTMLTextAreaElement ||
         (el instanceof HTMLInputElement && !["checkbox", "radio", "submit", "button", "reset", "image", "file"].includes(el.type)) ||
-        el.isContentEditable,
+        el.isContentEditable ||
+        !!editorKind(el),
+      editor: editorKind(el),
       isSelect: el instanceof HTMLSelectElement,
       inChallenge: !!el.closest(challengeElSelector()),
     };
@@ -723,6 +758,10 @@
     const el = elementMap.get(tag);
     if (!el) return { exists: false };
     if (el instanceof HTMLSelectElement) return { exists: true, value: el.options[el.selectedIndex]?.text || "" };
+    if (editorKind(el)) {
+      const lines = el.querySelectorAll(".view-line, .CodeMirror-line, .cm-line, .ace_line");
+      return { exists: true, value: [...lines].map((l) => l.textContent).join("\n"), editor: true };
+    }
     if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return { exists: true, value: el.value, focused: document.activeElement === el };
     return { exists: true, value: (el.innerText || el.textContent || "").slice(0, 2000), focused: el.contains(document.activeElement) };
   }
@@ -838,6 +877,17 @@
         return pointFor(cmd.tag);
       case "readback":
         return readback(cmd.tag);
+      case "paste": {
+        // Paste into the focused editor: editors insert pasted text verbatim
+        // (no auto-indent or auto-closing brackets, unlike typed text).
+        const t = document.activeElement;
+        if (!t || t === document.body || t.closest(challengeElSelector())) return { handled: false };
+        const dt = new DataTransfer();
+        dt.setData("text/plain", cmd.text);
+        const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true, composed: true });
+        t.dispatchEvent(ev);
+        return { handled: ev.defaultPrevented };
+      }
       case "focus": {
         const el = elementMap.get(cmd.tag);
         if (el && !el.closest(challengeElSelector())) el.focus();

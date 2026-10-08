@@ -31,7 +31,12 @@ export function describeAction(a, displayText) {
     case "click":
       return `click [${a.target}]`;
     case "type":
-      return `type "${displayText ?? a.text ?? ""}" into [${a.target}]${a.submit ? " + Enter" : ""}`;
+    {
+      const t = String(displayText ?? a.text ?? "");
+      const lines = t.split("\n").length;
+      const shown = lines > 1 || t.length > 90 ? `${t.split("\n")[0].slice(0, 60)}… (${lines} lines, ${t.length} chars)` : t;
+      return `type "${shown}" into [${a.target}]${a.submit ? " + Enter" : ""}`;
+    }
     case "select":
       return `select "${a.text}" in [${a.target}]`;
     case "scroll":
@@ -184,6 +189,7 @@ export class StellarAgent {
    */
   async perform(tabId, a) {
     const dom = async (action = a) => (await this.cs(tabId, { op: "execute", action })) || { ok: false, detail: "no response from page" };
+    if (a.type === "type" && (await this.cs(tabId, { op: "inspect", tag: a.target }))?.editor) return this.typeIntoEditor(tabId, a);
     if (this.settings.realClick === false || !this.real.available || !["click", "type", "select", "press_key"].includes(a.type)) return dom();
 
     try {
@@ -226,6 +232,48 @@ export class StellarAgent {
       if (/detached|not attached|Cannot access|No tab/i.test(e.message || "")) return dom();
       throw e;
     }
+  }
+
+  /**
+   * Code editors (Monaco — LeetCode, VS Code web —, CodeMirror, Ace). First the
+   * editor's own API in the page, which inserts the text exactly (no
+   * auto-indent / auto-closing brackets doubling things up); if the page
+   * doesn't expose it, a real click into the editor + select-all + real typing.
+   */
+  async typeIntoEditor(tabId, a) {
+    const text = String(a.text ?? "");
+    const clear = a.clear !== false;
+    let api = null;
+    try {
+      [{ result: api }] = await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", func: setEditorText, args: [a.target, text, clear] });
+    } catch (e) {
+      api = { ok: false, why: e.message };
+    }
+    const lines = text.split("\n").length;
+    if (api?.ok) return { ok: true, detail: `wrote ${lines} line(s) into the code editor (${api.via})` };
+
+    if (this.settings.realClick === false || !this.real.available) return { ok: false, detail: `code editor: ${api?.why || "no editor API"}, and real keyboard is off (Settings → Agent)` };
+    const p = await this.cs(tabId, { op: "point", tag: a.target });
+    if (!p?.ok || !(await this.real.attach(tabId))) return { ok: false, detail: `code editor: ${p?.reason || "real keyboard unavailable"}` };
+    await this.real.click(p.x, p.y);
+    await sleep(100);
+    // The editor shows only the lines in view; whatever it shows must be part of
+    // the intended code (an auto-inserted extra "}" or a missing line fails this).
+    const squash = (s) => String(s || "").replace(/\s+/g, "");
+    const matches = async () => {
+      await sleep(200);
+      const back = squash((await this.cs(tabId, { op: "readback", tag: a.target }).catch(() => null))?.value);
+      return back.length > 0 && squash(text).includes(back);
+    };
+    // 1) Paste — inserted verbatim, like a person pasting a solution.
+    if (clear) await this.real.clearFocused();
+    const pasted = await this.cs(tabId, { op: "paste", text }).catch(() => null);
+    if (pasted?.handled && (await matches())) return { ok: true, detail: `pasted ${lines} line(s) into the code editor (real focus + paste)` };
+    // 2) Real keystrokes — editors may auto-indent / auto-close brackets.
+    await this.real.clearFocused();
+    await this.real.insertText(text);
+    if (await matches()) return { ok: true, detail: `typed ${lines} line(s) into the code editor (real keyboard)` };
+    return { ok: false, detail: "typed into the code editor, but the editor changed the text (auto-indent / auto-closed brackets) — check the code" };
   }
 
   // ------------------------------------------------------------------ run
@@ -706,6 +754,48 @@ export class StellarAgent {
       }
     }
   }
+}
+
+// Runs in the page's own world (chrome.scripting, world MAIN) so it can reach
+// the editor objects the page created. Self-contained: no outer references.
+function setEditorText(tag, text, clear) {
+  const root = document.querySelector(`[data-stellar-tag="${tag}"]`);
+  if (!root) return { ok: false, why: "editor box not found" };
+  try {
+    const monaco = window.monaco;
+    if (root.classList.contains("monaco-editor") && monaco?.editor) {
+      const editors = monaco.editor.getEditors ? monaco.editor.getEditors() : [];
+      const ed = editors.find((e) => e.getDomNode && (e.getDomNode() === root || root.contains(e.getDomNode()) || e.getDomNode().contains(root)));
+      if (ed) {
+        const model = ed.getModel();
+        ed.pushUndoStop();
+        if (clear) ed.executeEdits("stellar", [{ range: model.getFullModelRange(), text, forceMoveMarkers: true }]);
+        else ed.trigger("stellar", "type", { text });
+        ed.pushUndoStop();
+        ed.focus();
+        return { ok: true, via: "Monaco API" };
+      }
+    }
+    if (root.CodeMirror) {
+      if (clear) root.CodeMirror.setValue(text);
+      else root.CodeMirror.replaceSelection(text);
+      return { ok: true, via: "CodeMirror API" };
+    }
+    const view = root.querySelector(".cm-content")?.cmView?.view;
+    if (view) {
+      view.dispatch({ changes: { from: 0, to: clear ? view.state.doc.length : 0, insert: text } });
+      return { ok: true, via: "CodeMirror API" };
+    }
+    if (root.classList.contains("ace_editor") && window.ace) {
+      const ed = window.ace.edit(root);
+      if (clear) ed.setValue(text, 1);
+      else ed.insert(text);
+      return { ok: true, via: "Ace API" };
+    }
+  } catch (e) {
+    return { ok: false, why: String(e?.message || e) };
+  }
+  return { ok: false, why: "the page doesn't expose the editor's API" };
 }
 
 // In the side panel the current window is the browser window being driven.
