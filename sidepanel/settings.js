@@ -25,6 +25,9 @@ export const DEFAULTS = {
   // stops for real questions (missing required details, CAPTCHAs).
   runMode: "safe",
   localPreload: true,
+  // Unlock browser-autofilled logins with one real click on a blank part of the
+  // login form (chrome.debugger, attached for about a second).
+  realClick: true,
   // Unload the on-device model after this many idle minutes (0 = never).
   localUnloadMinutes: 10,
   // Vault import: "local" (on-device) or "gemini" (uploads the document).

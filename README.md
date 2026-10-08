@@ -64,6 +64,13 @@ Stellar card in `chrome://extensions`. Settings and the vault are kept.
   Arkose or Cloudflare “Just a moment…” check is on screen, the agent pauses *before* any model call, shows a
   **Human verification needed** card and an on-page message, and resumes by itself as soon as the check is
   cleared (or when you click *I’ve done it — continue*). Model actions that target a CAPTCHA widget are blocked.
+- **Autofilled logins**: Chrome fills saved logins on page load but hides the values from the site (and from
+  extensions) until a *real* click — so a plain scripted Sign-in submits empty fields. Stellar spots these
+  fields, masks them in the frame, and makes **one real click on a blank part of the login form** through
+  Chrome's debugger protocol (attached for about a second; Chrome briefly shows a “started debugging this
+  browser” bar). It never clicks a button, field, link or CAPTCHA this way. This is why the extension asks for
+  the `debugger` permission. Turn it off in **Settings → Agent → Unlock autofilled logins by itself** and
+  Stellar asks you to click the page once instead. The password is never read or sent.
 - **Smooth follow & guided pace**: while a task runs, the panel glides to each new card (no jumps) and the newest card glows briefly. Scroll up to read and following pauses — press **↓ Follow live** or scroll to the bottom to resume. With **Settings → Pace → Guided** (default) each stage stays on screen for about a second before the next one starts, so people can follow along; choose **Fast** for full speed.
 - **Theme**: follows your system light/dark setting; the ◐ button in the header cycles System → Light → Dark.
 

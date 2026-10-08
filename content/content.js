@@ -624,6 +624,41 @@
     return { pending: fields.length > 0, fields: fields.map((el) => nameOf(el) || el.type).slice(0, 5) };
   }
 
+  // A point inside the login form where a real click does nothing: not a
+  // field, button, link, label, CAPTCHA or anything clickable, and never
+  // outside the form (a click there could close a sign-in dialog).
+  const NOT_QUIET =
+    "a, button, input, select, textarea, label, summary, option, iframe, video, [role=button], [role=link], [role=checkbox], [role=switch], [role=tab], [role=menuitem], [onclick], [contenteditable=''], [contenteditable=true], [tabindex]:not([tabindex='-1'])";
+  function quietPoint() {
+    const field = [...document.querySelectorAll("input:not([type=hidden])")].find((el) => autofillHidden(el) && isRendered(el));
+    if (!field) return null;
+    const challengeRects = deepQueryAll(`iframe, ${CHALLENGE_CONTAINERS}`)
+      .filter((f) => f.matches(CHALLENGE_CONTAINERS) || CHALLENGES.some((c) => c.frame.test(f.src || "")))
+      .map((f) => f.getBoundingClientRect());
+    const isQuiet = (x, y, scope) => {
+      const el = document.elementFromPoint(x, y);
+      if (!el || !scope.contains(el) || el.closest(NOT_QUIET) || el.closest(CHALLENGE_CONTAINERS)) return false;
+      if (getComputedStyle(el).cursor === "pointer") return false;
+      if (challengeRects.some((r) => x > r.left - 12 && x < r.right + 12 && y > r.top - 12 && y < r.bottom + 12)) return false;
+      return true;
+    };
+    // The form first, then up to three wrappers around it (the card or dialog body).
+    let scope = field.form || field.closest("form") || field.parentElement;
+    for (let level = 0; scope && scope !== document.body && level < 4; level++, scope = scope.parentElement) {
+      const r = scope.getBoundingClientRect();
+      const left = Math.max(r.left, 0) + 4;
+      const right = Math.min(r.right, innerWidth) - 4;
+      const top = Math.max(r.top, 0) + 4;
+      const bottom = Math.min(r.bottom, innerHeight) - 4;
+      for (let y = top; y < bottom; y += 10) {
+        for (let x = left; x < right; x += 10) {
+          if (isQuiet(x, y, scope)) return { x: Math.round(x), y: Math.round(y), on: scope.tagName.toLowerCase() };
+        }
+      }
+    }
+    return null;
+  }
+
   function inspect(tag) {
     const el = elementMap.get(tag);
     if (!el) return { exists: false };
@@ -737,6 +772,8 @@
         return detectChallenge();
       case "autofill":
         return detectAutofill();
+      case "quiet-point":
+        return quietPoint();
       case "inspect":
         return inspect(cmd.tag);
       case "execute":

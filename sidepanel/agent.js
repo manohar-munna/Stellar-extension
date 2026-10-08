@@ -145,6 +145,44 @@ export class StellarAgent {
     return outcome;
   }
 
+  /**
+   * Chrome only hands autofilled logins to the page after a trusted user
+   * gesture, which synthetic DOM events are not. A click sent through the
+   * debugger protocol goes through Chrome's real input pipeline, so one click
+   * on a blank part of the form releases the values. The debugger is attached
+   * only for that click. Never used on buttons, fields or CAPTCHAs — the point
+   * comes from the content script's quiet-point search.
+   * @returns {Promise<{x,y,on}|null>} the point clicked, when Chrome released the values
+   */
+  async unlockAutofill(tabId) {
+    if (!chrome.debugger) return null;
+    let pt;
+    try {
+      pt = await this.cs(tabId, { op: "quiet-point" });
+    } catch {
+      return null;
+    }
+    if (!pt) return null;
+    const target = { tabId };
+    try {
+      await chrome.debugger.attach(target, "1.3");
+      const send = (type, extra = {}) => chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type, x: pt.x, y: pt.y, ...extra });
+      await send("mouseMoved");
+      await send("mousePressed", { button: "left", buttons: 1, clickCount: 1 });
+      await send("mouseReleased", { button: "left", buttons: 0, clickCount: 1 });
+    } catch {
+      return null;
+    } finally {
+      await chrome.debugger.detach(target).catch(() => {});
+    }
+    for (let i = 0; i < 12; i++) {
+      await sleep(150);
+      const a = await this.cs(tabId, { op: "autofill" }).catch(() => null);
+      if (a && !a.pending) return pt;
+    }
+    return null;
+  }
+
   // ------------------------------------------------------------------ run
 
   async run({ task, mode }) {
@@ -168,6 +206,7 @@ export class StellarAgent {
     let consecutiveBlocks = 0;
     const dismissedChecks = new Set(); // check kinds the user waved through this run
     let dismissedAutofill = false;
+    const autofillTried = new Set(); // pages where the real-click unlock was tried
     let tabId = null;
 
     ui.runStarted({ task, snapshot, settings, maxSteps });
@@ -224,7 +263,7 @@ export class StellarAgent {
         const t0 = performance.now();
         await this.cs(tabId, { op: "overlay", visible: false });
         await sleep(40);
-        const scan = await this.cs(tabId, { op: "scan", known: vault });
+        let scan = await this.cs(tabId, { op: "scan", known: vault });
         const rawDataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
         await this.cs(tabId, { op: "overlay", visible: true, message: snapshot ? "Stellar snapshot" : `Stellar · step ${step}` });
         const bitmap = await loadBitmap(rawDataUrl);
@@ -255,6 +294,17 @@ export class StellarAgent {
         // Saved login autofilled by the browser: the values stay hidden from the
         // page and from Stellar until a real click on the page, so a synthetic
         // Sign-in would submit empty fields. One click by the user unlocks them.
+        if (!snapshot && scan.autofill?.pending && !dismissedAutofill && settings.realClick !== false && !autofillTried.has(scan.url)) {
+          // First choice: one real click on a blank part of the form, no user needed.
+          autofillTried.add(scan.url);
+          ui.status("Chrome is hiding the autofilled login — making one real click on a blank part of the form…");
+          const unlocked = await this.unlockAutofill(tabId);
+          if (unlocked) {
+            ui.note(`Chrome had autofilled ${scan.autofill.fields.map((f) => `"${f}"`).join(", ")} but was hiding the values. Stellar made one real click on a blank part of the form (${unlocked.on}, at ${unlocked.x},${unlocked.y}) and Chrome released them — the password itself is never read or sent.`);
+            history.push({ text: `Step ${step}: the browser's saved login was autofilled into ${scan.autofill.fields.join(", ")}; it is now usable. Treat these fields as filled — do not ask for them or retype them.`, sig: "autofill" });
+            scan = await this.cs(tabId, { op: "scan", known: vault });
+          }
+        }
         if (!snapshot && scan.autofill?.pending && !dismissedAutofill) {
           bitmap.close?.();
           const kind = "browser autofill";

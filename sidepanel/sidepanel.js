@@ -1018,6 +1018,7 @@ async function openSettings() {
   document.querySelector(`input[name=pace][value=${s.pace || "guided"}]`).checked = true;
   document.querySelector(`input[name=localBackup][value=${s.localBackup || "localfirst"}]`).checked = true;
   $("#localPreload").checked = s.localPreload !== false;
+  $("#realClick").checked = s.realClick !== false;
   (document.querySelector(`input[name=localUnload][value="${s.localUnloadMinutes ?? 10}"]`) || document.querySelector("input[name=localUnload][value='10']")).checked = true;
   $("#vaultGemini").checked = s.vaultExtract === "gemini";
   $("#vaultReview").replaceChildren();
@@ -1067,6 +1068,7 @@ $("#saveSettings").addEventListener("click", async () => {
     pace: document.querySelector("input[name=pace]:checked")?.value || "guided",
     localBackup: document.querySelector("input[name=localBackup]:checked")?.value || "localfirst",
     localPreload: $("#localPreload").checked,
+    realClick: $("#realClick").checked,
     localUnloadMinutes: Number(document.querySelector("input[name=localUnload]:checked")?.value ?? 10),
     vaultExtract: $("#vaultGemini").checked ? "gemini" : "local",
     maxSteps: Math.max(1, Math.min(50, parseInt($("#maxSteps").value, 10) || 15)),
