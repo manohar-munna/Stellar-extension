@@ -15,17 +15,29 @@ so you can show people exactly what leaves the machine.
 
 ![pipeline](https://img.shields.io/badge/pipeline-capture→detect→redact→send→reason→validate→execute-7c3aed)
 
+## ⬇️ Download
+
+[![Download Stellar extension (.zip)](https://img.shields.io/badge/Download-Stellar%20extension%20(.zip)-7c3aed?style=for-the-badge&logo=googlechrome&logoColor=white)](https://github.com/manohar-munna/Stellar-extension/archive/refs/heads/main.zip)
+
+**[Download the latest version (.zip)](https://github.com/manohar-munna/Stellar-extension/archive/refs/heads/main.zip)** —
+always built from the newest commit on `main`, so it is never out of date.
+
 ---
 
 ## Install (2 minutes)
 
-1. Open `chrome://extensions` in Chrome.
-2. Turn on **Developer mode** (top right).
-3. Click **Load unpacked** and select this folder (`Stellar-extension`).
+1. [Download the zip](https://github.com/manohar-munna/Stellar-extension/archive/refs/heads/main.zip) and
+   unzip it. You get a folder named **`Stellar-extension-main`** (the one containing `manifest.json`).
+   Keep it somewhere permanent — Chrome loads the extension from that folder.
+2. Open `chrome://extensions` in Chrome and turn on **Developer mode** (top right).
+3. Click **Load unpacked** and select the `Stellar-extension-main` folder.
 4. Pin the ⭐ Stellar icon. Click it (or press **Alt+Shift+S**) to open the side panel.
 5. Click the ⚙ gear → paste one or more **Gemini API keys**, comma-separated
-   (from [aistudio.google.com](https://aistudio.google.com/apikey)) → **Test key & load models** → **Save**.
+   (from [aistudio.google.com](https://aistudio.google.com/apikey)) → **Test keys & load models** → **Save**.
    Rejected or rate-limited keys are rotated out automatically, like Stellar's key manager.
+
+**Updating:** download the zip again, replace the folder's contents, then click the ↻ reload icon on the
+Stellar card in `chrome://extensions`. Settings and the vault are kept.
 
 ## Use it
 
