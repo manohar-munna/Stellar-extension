@@ -426,13 +426,18 @@ function makeRun({ task, snapshot, settings, maxSteps }) {
     )
   );
   feed.append(run.el);
+  addRunTab(run);
+  watchRun(run);
+  return run;
+}
 
-  run.dot = h("span", { class: "sdot running" });
+function addRunTab(run) {
+  run.dot = h("span", { class: `sdot ${run.status}` });
   run.tab = h(
     "button",
-    { class: "runtab", role: "tab", title: snapshot ? "Privacy snapshot" : task, onclick: () => selectRun(run) },
+    { class: "runtab", role: "tab", title: run.snapshot ? "Privacy snapshot" : run.task, onclick: () => selectRun(run) },
     run.dot,
-    h("span", { class: "t" }, title),
+    h("span", { class: "t" }, run.title),
     h(
       "span",
       {
@@ -449,11 +454,139 @@ function makeRun({ task, snapshot, settings, maxSteps }) {
   runTabs.append(run.tab);
   runbar.hidden = false;
   runs.push(run);
-  return run;
+}
+
+// ------------------------------------------------------------ saved tasks
+// Tasks survive closing and reopening the panel; only × (or Clear) removes
+// one. They are kept in this extension's IndexedDB on this device. Unredacted
+// captures are not written to disk — saved copies show a note instead.
+
+const runStore = (() => {
+  let dbp = null;
+  const open = () =>
+    (dbp ||= new Promise((resolve, reject) => {
+      const r = indexedDB.open("stellar-runs", 1);
+      r.onupgradeneeded = () => r.result.createObjectStore("runs", { keyPath: "id" });
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    }));
+  const tx = async (mode, fn) => {
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      const t = db.transaction("runs", mode);
+      const req = fn(t.objectStore("runs"));
+      t.oncomplete = () => resolve(req?.result);
+      t.onerror = () => reject(t.error);
+    });
+  };
+  return {
+    put: (rec) => tx("readwrite", (s) => s.put(rec)).catch(() => {}),
+    del: (id) => tx("readwrite", (s) => s.delete(id)).catch(() => {}),
+    all: () => tx("readonly", (s) => s.getAll()).catch(() => []),
+  };
+})();
+
+const saveTimers = new Map();
+
+function savedCopy(run) {
+  const clone = run.el.cloneNode(true);
+  clone.classList.remove("sel");
+  clone.querySelectorAll("img.shot.raw").forEach((img) => img.replaceWith(h("div", { class: "note" }, "Unredacted capture — shown live only, never saved to disk.")));
+  return {
+    id: run.id,
+    title: run.title,
+    task: run.task,
+    snapshot: run.snapshot,
+    status: run.status,
+    html: clone.innerHTML,
+    log: run.log,
+    savedAt: Date.now(),
+  };
+}
+
+function persistRun(run, delay = 700) {
+  clearTimeout(saveTimers.get(run));
+  const save = () => {
+    saveTimers.delete(run);
+    if (runs.includes(run)) runStore.put(savedCopy(run));
+  };
+  if (delay <= 0) return save();
+  saveTimers.set(run, setTimeout(save, delay));
+}
+
+function watchRun(run) {
+  new MutationObserver(() => persistRun(run)).observe(run.el, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class"] });
+  persistRun(run);
+}
+
+// Write anything pending as the panel closes.
+addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "hidden") return;
+  for (const run of [...saveTimers.keys()]) persistRun(run, 0);
+});
+
+/** Rebuild saved tasks; a task that was running when the panel closed is marked stopped. */
+async function restoreRuns() {
+  const saved = (await runStore.all()).sort((a, b) => a.id - b.id);
+  if (!saved.length) return;
+  $("#intro")?.remove();
+  for (const s of saved) {
+    runSeq = Math.max(runSeq, s.id);
+    const el = h("section", { class: "run", "data-run": s.id });
+    el.innerHTML = s.html;
+    // Approvals, questions and hand-offs from the old session can't be answered any more.
+    el.querySelectorAll(".card .row:has(.btn.ok, .btn.primary, .btn.danger), .watch").forEach((n) => n.remove());
+    el.querySelectorAll(".card input, .card textarea").forEach((n) => (n.disabled = true));
+    let status = s.status;
+    if (status === "running" || status === "waiting") {
+      status = "stopped";
+      el.querySelectorAll(".spinner").forEach((n) => n.remove());
+      el.querySelectorAll(".step.live").forEach((n) => {
+        n.classList.remove("live");
+        const sum = n.querySelector(".sum");
+        if (sum) sum.textContent = "✗ interrupted";
+      });
+      el.querySelectorAll(".card.pending").forEach((n) => n.remove());
+      el.append(h("div", { class: "final bad" }, h("span", { class: "lbl" }, "Stopped"), "The side panel was closed while this task was running. Run it again to continue."));
+    }
+    const run = { id: s.id, title: s.title, task: s.task, snapshot: s.snapshot, status, restored: true, steps: [], el, log: s.log || {}, statsEl: el.querySelector(".run-stats"), stats: { tags: new Set(), bytes: 0, leaks: 0 } };
+    // Restored cards are plain HTML, so their clicks are handled here.
+    el.addEventListener("click", (e) => {
+      const seg = e.target.closest(".seg");
+      if (seg) {
+        e.stopPropagation();
+        const step = seg.closest(".step");
+        step.classList.remove("collapsed");
+        const stage = STAGES[[...seg.parentElement.children].indexOf(seg)];
+        const target = step.querySelector(`.card[data-stage="${stage}"]`) || step;
+        setTimeout(() => glideTo(target, 700), 50);
+        return;
+      }
+      const head = e.target.closest(".step-h");
+      if (head) return head.closest(".step").classList.toggle("collapsed");
+      const tool = e.target.closest(".run-tools .link");
+      if (tool) for (const st of el.querySelectorAll(".step")) st.classList.toggle("collapsed", /Collapse/.test(tool.textContent));
+    });
+    feed.append(el);
+    addRunTab(run);
+    watchRun(run);
+  }
+  let pick = null;
+  try {
+    pick = runs.find((r) => String(r.id) === localStorage.getItem("stellar.selectedRun"));
+  } catch {
+    /* storage unavailable */
+  }
+  selectRun(pick || runs[runs.length - 1]);
 }
 
 function selectRun(run) {
   selectedRun = run;
+  try {
+    if (run) localStorage.setItem("stellar.selectedRun", String(run.id));
+  } catch {
+    /* storage unavailable */
+  }
   for (const r of runs) {
     r.el.classList.toggle("sel", r === run);
     r.tab.classList.toggle("sel", r === run);
@@ -468,6 +601,9 @@ function selectRun(run) {
 
 function closeRun(run) {
   if (run === activeRun) return; // can't close a running task
+  clearTimeout(saveTimers.get(run));
+  saveTimers.delete(run);
+  runStore.del(run.id);
   run.el.remove();
   run.tab.remove();
   runs.splice(runs.indexOf(run), 1);
@@ -479,6 +615,7 @@ function setRunStatus(run, status) {
   run.status = status;
   run.dot.className = `sdot ${status}`;
   updateRunStats(run);
+  persistRun(run);
 }
 
 function setAllCollapsed(run, collapsed) {
@@ -493,6 +630,7 @@ const cap = (s) => s[0].toUpperCase() + s.slice(1);
 const kb = (bytes) => `${Math.round(bytes / 1024)} KB`;
 
 function updateRunStats(run) {
+  if (run.restored) return; // a saved copy keeps the stats line it was saved with
   const n = run.steps.length;
   const secs = ((performance.now() - run.t0) / 1000).toFixed(1);
   const parts = [
@@ -1190,6 +1328,7 @@ document.querySelectorAll("input[name=runMode]").forEach((r) =>
 // ------------------------------------------------------------------- init
 
 (async () => {
+  restoreRuns();
   const s = await loadSettings();
   applyPresenter(s.presenter);
   applyTheme(s.theme || "system");
