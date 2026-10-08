@@ -797,14 +797,14 @@ const ui = {
     });
   },
 
-  handoff(S, kind) {
+  handoff(S, kind, copy = null) {
     const run = activeRun;
     setRunStatus(run, "waiting");
-    S.action = `human verification — ${kind}`;
-    setBrief(S, "sent", "local", "Sent", h("span", { class: "dim" }, `nothing — paused for you to complete the ${kind}`));
+    S.action = copy ? `${copy.title.toLowerCase()} — ${kind}` : `human verification — ${kind}`;
+    setBrief(S, "sent", "local", "Sent", h("span", { class: "dim" }, copy ? `nothing — paused: ${copy.title.toLowerCase()}` : `nothing — paused for you to complete the ${kind}`));
     let resolveDone;
     const done = new Promise((r) => (resolveDone = r));
-    const live = h("div", { class: "watch" }, h("span", { class: "spinner" }), "Watching the tab — resumes automatically once the check is cleared…");
+    const live = h("div", { class: "watch" }, h("span", { class: "spinner" }), copy?.watching || "Watching the tab — resumes automatically once the check is cleared…");
     const buttons = h(
       "div",
       { class: "row" },
@@ -812,9 +812,9 @@ const ui = {
       h("button", { class: "btn danger", onclick: () => finish("stop") }, "Stop")
     );
     const node = card(
-      { title: "Human verification needed", badge: "mixed", badgeText: "you" },
-      h("div", {}, h("b", {}, kind), " is on the page. Stellar doesn't solve CAPTCHAs or bot checks — please complete it yourself in the tab."),
-      h("div", { class: "note" }, "No check on the page? Click Continue — Stellar won't ask about it again during this task."),
+      { title: copy?.title || "Human verification needed", badge: "mixed", badgeText: "you" },
+      copy ? h("div", {}, copy.body) : h("div", {}, h("b", {}, kind), " is on the page. Stellar doesn't solve CAPTCHAs or bot checks — please complete it yourself in the tab."),
+      h("div", { class: "note" }, copy?.note || "No check on the page? Click Continue — Stellar won't ask about it again during this task."),
       live,
       buttons
     );
@@ -825,7 +825,7 @@ const ui = {
       if (finished) return;
       finished = true;
       pending = pending.filter((p) => p !== cancel);
-      const msg = { auto: "✓ Check cleared — resuming", manual: "✓ You marked it done — resuming", stop: "✗ Stopped", timeout: "✗ Timed out" }[v];
+      const msg = { auto: copy ? "✓ Done — resuming" : "✓ Check cleared — resuming", manual: "✓ You marked it done — resuming", stop: "✗ Stopped", timeout: "✗ Timed out" }[v];
       live.replaceWith(h("div", { class: `note ${v === "auto" || v === "manual" ? "" : "warn"}` }, msg));
       buttons.remove();
       S.result = v === "auto" || v === "manual" ? { kind: "ok", text: "completed by you" } : { kind: "bad", text: msg };
@@ -839,7 +839,7 @@ const ui = {
     if (selectedRun !== run) selectRun(run);
     S.el.classList.remove("collapsed");
     append(S.body, node);
-    this.status(`Waiting for you to complete the ${kind}…`);
+    this.status(copy?.waiting || `Waiting for you to complete the ${kind}…`);
     return { done, resolve: finish };
   },
 

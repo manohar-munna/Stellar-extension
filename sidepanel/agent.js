@@ -111,11 +111,11 @@ export class StellarAgent {
    * and the run resumes by itself once the widget reports success (or the
    * interstitial page is gone), or when the user says so.
    */
-  async waitForHuman(tabId, S, challenge) {
+  async waitForHuman(tabId, S, challenge, { op = "challenge", overlay, copy } = {}) {
     const { ui } = this;
     ui.setStage(null);
-    await this.cs(tabId, { op: "overlay", visible: true, message: `Please complete the ${challenge.kind} — Stellar resumes automatically` }).catch(() => {});
-    const handoff = ui.handoff(S, challenge.kind);
+    await this.cs(tabId, { op: "overlay", visible: true, message: overlay || `Please complete the ${challenge.kind} — Stellar resumes automatically` }).catch(() => {});
+    const handoff = ui.handoff(S, challenge.kind, copy);
     let outcome = null;
     handoff.done.then((v) => (outcome = outcome || v));
     const deadline = Date.now() + 5 * 60_000;
@@ -131,7 +131,7 @@ export class StellarAgent {
       await sleep(1500);
       try {
         await this.inject(tabId);
-        const c = await this.cs(tabId, { op: "challenge" });
+        const c = await this.cs(tabId, { op });
         if (c && !c.pending) {
           outcome = "auto";
           handoff.resolve("auto");
@@ -167,6 +167,7 @@ export class StellarAgent {
     const maxSteps = snapshot ? 1 : Math.max(1, Math.min(50, Number(settings.maxSteps) || 15));
     let consecutiveBlocks = 0;
     const dismissedChecks = new Set(); // check kinds the user waved through this run
+    let dismissedAutofill = false;
     let tabId = null;
 
     ui.runStarted({ task, snapshot, settings, maxSteps });
@@ -248,6 +249,28 @@ export class StellarAgent {
           // nothing to solve (or it can't be detected as solved): don't ask again.
           if (outcome === "manual") dismissedChecks.add(scan.challenge.kind);
           history.push({ text: `Step ${step}: a ${scan.challenge.kind} appeared and the user completed it by hand.`, sig: "human" });
+          continue;
+        }
+
+        // Saved login autofilled by the browser: the values stay hidden from the
+        // page and from Stellar until a real click on the page, so a synthetic
+        // Sign-in would submit empty fields. One click by the user unlocks them.
+        if (!snapshot && scan.autofill?.pending && !dismissedAutofill) {
+          bitmap.close?.();
+          const kind = "browser autofill";
+          const outcome = await this.waitForHuman(tabId, S, { kind }, {
+            op: "autofill",
+            overlay: "Click once on an empty part of the page so Chrome hands over the autofilled login — Stellar resumes automatically",
+            copy: {
+              title: "Click the page once",
+              body: `Chrome filled in ${scan.autofill.fields.map((f) => `"${f}"`).join(", ")} from your saved passwords, but keeps the values hidden from the site and from extensions until you click or type on the page yourself. Stellar's clicks don't count, so waiting won't help — click once on an empty part of the page.`,
+              note: "Stellar never reads or stores the autofilled password. Already clicked and it didn't resume? Press Continue.",
+              watching: "Watching the fields — resumes as soon as Chrome releases the values…",
+              waiting: "Waiting for one click on the page…",
+            },
+          });
+          if (outcome === "manual") dismissedAutofill = true;
+          history.push({ text: `Step ${step}: the browser had autofilled ${scan.autofill.fields.join(", ")}; the user clicked the page so the values became usable. Treat these fields as filled — do not ask for them.`, sig: "human" });
           continue;
         }
 

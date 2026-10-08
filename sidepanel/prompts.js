@@ -135,7 +135,7 @@ export function buildStepPrompt({ task, step, maxSteps, page, regions, vaultTags
   for (const e of elements) {
     const state = [];
     if (e.inputType && e.inputType !== "text") state.push(e.inputType);
-    if (e.filled !== undefined) state.push(e.filled ? "filled" : "empty");
+    if (e.filled !== undefined) state.push(e.autofilled ? "filled by the browser's saved login" : e.filled ? "filled" : "empty");
     if (e.checked !== undefined) state.push(e.checked ? "checked" : "unchecked");
     if (e.expanded !== undefined) state.push(e.expanded ? "expanded" : "collapsed");
     if (e.disabled) state.push("disabled");

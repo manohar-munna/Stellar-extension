@@ -209,6 +209,10 @@
       };
       if (el instanceof HTMLInputElement) info.inputType = (el.type || "text").toLowerCase();
       if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) info.filled = el.value.length > 0;
+      if (autofillHidden(el)) {
+        info.filled = true;
+        info.autofilled = true;
+      }
       if (el.required || el.getAttribute("aria-required") === "true" || /\*\s*$/.test(info.name)) info.required = true;
       if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) info.checked = el.checked;
       const expanded = el.getAttribute("aria-expanded");
@@ -328,7 +332,15 @@
 
     // 1. Form fields: anything typed into a sensitive field is redacted whole.
     for (const el of document.querySelectorAll("input:not([type=hidden]), textarea")) {
-      if (!el.value) continue;
+      if (!el.value) {
+        // Browser-autofilled values are drawn on screen but read as "" until the
+        // user interacts with the page — redact the whole field anyway.
+        if (!autofillHidden(el)) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2 || !intersectsViewport(r) || !isRendered(el)) continue;
+        found.push({ category: fieldCategory(el) || "OTHER_PII", rect: rectOf(r), value: "", source: "dom", detail: "browser-autofilled field" });
+        continue;
+      }
       const r = el.getBoundingClientRect();
       if (r.width < 2 || r.height < 2 || !intersectsViewport(r) || !isRendered(el)) continue;
       const kv = known.find((k) => el.value.includes(k.value));
@@ -586,6 +598,32 @@
     return { pending: false };
   }
 
+  // ------------------------------------------------- browser autofill
+  // Chrome fills saved logins on page load but hides the values from every
+  // script (the page's own and extensions') until a real user gesture on the
+  // page. Synthetic clicks don't count, so waiting or retrying never helps:
+  // the user has to click the page once.
+  function autofillHidden(el) {
+    if (!(el instanceof HTMLInputElement) || el.value) return false;
+    for (const sel of [":autofill", ":-webkit-autofill"]) {
+      try {
+        if (el.matches(sel)) return true;
+      } catch {
+        /* selector unsupported */
+      }
+    }
+    return false;
+  }
+
+  function detectAutofill() {
+    const fields = [...document.querySelectorAll("input:not([type=hidden])")].filter((el) => {
+      if (!autofillHidden(el)) return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 2 && r.height > 2 && intersectsViewport(r) && isRendered(el);
+    });
+    return { pending: fields.length > 0, fields: fields.map((el) => nameOf(el) || el.type).slice(0, 5) };
+  }
+
   function inspect(tag) {
     const el = elementMap.get(tag);
     if (!el) return { exists: false };
@@ -693,9 +731,12 @@
           pii: scanPii(cmd.known),
           images: scanImages(),
           challenge: detectChallenge(),
+          autofill: detectAutofill(),
         };
       case "challenge":
         return detectChallenge();
+      case "autofill":
+        return detectAutofill();
       case "inspect":
         return inspect(cmd.tag);
       case "execute":
