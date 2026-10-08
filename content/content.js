@@ -477,16 +477,20 @@
   // agent can pause and hand control to the user, then resume once the
   // widget's response token is filled (or the interstitial page is gone).
 
-  const CHALLENGE_WIDGETS = [
-    { kind: "Cloudflare Turnstile", sel: 'iframe[src*="challenges.cloudflare.com"], .cf-turnstile', token: '[name="cf-turnstile-response"]' },
-    { kind: "reCAPTCHA", sel: 'iframe[src*="/recaptcha/"][src*="bframe"], iframe[src*="/recaptcha/"]:not([src*="size=invisible"]), .g-recaptcha', token: '[name="g-recaptcha-response"], #g-recaptcha-response' },
-    { kind: "hCaptcha", sel: 'iframe[src*="hcaptcha.com"], .h-captcha', token: '[name="h-captcha-response"]' },
-    { kind: "Arkose / FunCaptcha", sel: 'iframe[src*="arkoselabs"], iframe[src*="funcaptcha"]', token: '[name="fc-token"], #FunCaptcha-Token' },
+  // A check is only reported when its challenge iframe is actually on screen at
+  // widget size. Invisible reCAPTCHA (v3 / size=invisible), its corner badge and
+  // pre-created hidden challenge frames are ignored — they are not something the
+  // user has to solve.
+  const CHALLENGES = [
+    { kind: "Cloudflare Turnstile", frame: /challenges\.cloudflare\.com/i, token: '[name="cf-turnstile-response"]' },
+    { kind: "reCAPTCHA", frame: /\/recaptcha\/(api2|enterprise)\/(anchor|bframe)/i, invisible: /[?&]size=invisible/i, token: '[name="g-recaptcha-response"]' },
+    { kind: "hCaptcha", frame: /hcaptcha\.com/i, token: '[name="h-captcha-response"]' },
+    { kind: "Arkose / FunCaptcha", frame: /arkoselabs|funcaptcha/i, token: '[name="fc-token"], #FunCaptcha-Token' },
   ];
-  const CHALLENGE_TEXT = /verify (that )?you are (a )?human|i'?m not a robot|checking (if the site connection is secure|your browser)|complete the security check|press (and|&) hold/i;
+  const CHALLENGE_CONTAINERS = ".cf-turnstile, .g-recaptcha, .h-captcha, #challenge-form, #challenge-stage";
 
   function challengeElSelector() {
-    return CHALLENGE_WIDGETS.map((w) => w.sel).join(", ") + ", #challenge-form, #challenge-stage";
+    return CHALLENGE_CONTAINERS;
   }
 
   // Widgets such as Cloudflare Turnstile render their iframe inside a *closed*
@@ -514,14 +518,18 @@
     return out;
   }
 
-  function visibleBox(el) {
-    // Walk up until something has a real box (shadow hosts / wrappers may be 0×0).
-    for (let cur = el, i = 0; cur && i < 4; cur = cur.parentElement || cur.getRootNode()?.host, i++) {
-      if (!(cur instanceof Element)) continue;
-      const r = cur.getBoundingClientRect();
-      if (r.width > 20 && r.height > 20 && intersectsViewport(r) && isRendered(cur)) return cur;
+  /** Is this element really visible: on screen, widget-sized, and no ancestor hides it? */
+  function shownOnScreen(el, minW = 120, minH = 40) {
+    const r = el.getBoundingClientRect();
+    if (r.width < minW || r.height < minH || !intersectsViewport(r)) return false;
+    for (let cur = el, i = 0; cur && i < 40; i++) {
+      if (cur instanceof Element) {
+        const st = getComputedStyle(cur);
+        if (st.display === "none" || st.visibility === "hidden" || parseFloat(st.opacity) < 0.05) return false;
+      }
+      cur = cur.parentElement || cur.getRootNode?.()?.host || null;
     }
-    return null;
+    return true;
   }
 
   function detectChallenge() {
@@ -529,26 +537,19 @@
     if (/^just a moment|^attention required|^one more step|^security check/i.test(document.title.trim()) || document.querySelector("#challenge-form, #challenge-stage, #cf-challenge-running")) {
       return { pending: true, kind: "Cloudflare browser check" };
     }
-    let deepIframes = null; // computed lazily, it walks the whole DOM
-    for (const w of CHALLENGE_WIDGETS) {
-      const tokens = [...document.querySelectorAll(w.token)];
-      // 1. Widget elements in the light DOM (implicit rendering, e.g. .cf-turnstile).
-      // 2. The response field's container (explicit rendering puts the iframe in a closed shadow root next to it).
-      // 3. Challenge iframes inside open or closed shadow roots.
-      let box = [...document.querySelectorAll(w.sel)].map(visibleBox).find(Boolean) || tokens.map((t) => visibleBox(t.parentElement)).find(Boolean);
-      if (!box) {
-        deepIframes ??= deepQueryAll("iframe");
-        const frameSel = w.sel.split(",").map((x) => x.trim()).filter((x) => x.startsWith("iframe")).join(", ");
-        box = frameSel ? deepIframes.filter((f) => f.matches(frameSel)).map(visibleBox).find(Boolean) : null;
-      }
-      if (!box) continue;
-      const solved = tokens.some((t) => (t.value || "").length > 10);
+    const frames = deepQueryAll("iframe");
+    for (const c of CHALLENGES) {
+      const shown = frames.filter((f) => {
+        const src = f.src || f.getAttribute("src") || "";
+        if (!c.frame.test(src) || (c.invisible && c.invisible.test(src))) return false;
+        if (f.closest(".grecaptcha-badge")) return false;
+        return shownOnScreen(f);
+      });
+      if (!shown.length) continue;
+      // Widgets fill their response field once the user passes the check.
+      const solved = [...document.querySelectorAll(c.token)].some((t) => (t.value || "").length > 10);
       if (solved) continue;
-      return { pending: true, kind: w.kind, rect: rectOf(box.getBoundingClientRect()), via: tokens.length ? "response field" : "widget frame" };
-    }
-    const text = (document.body?.innerText || "").slice(0, 20000);
-    if (CHALLENGE_TEXT.test(text) && document.querySelectorAll("iframe").length) {
-      return { pending: true, kind: "human verification" };
+      return { pending: true, kind: c.kind, rect: rectOf(shown[0].getBoundingClientRect()) };
     }
     return { pending: false };
   }

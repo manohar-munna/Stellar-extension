@@ -140,6 +140,7 @@ export class StellarAgent {
     }
     if (outcome === "stop") throw new StopError();
     await this.settle(tabId);
+    return outcome;
   }
 
   // ------------------------------------------------------------------ run
@@ -158,6 +159,7 @@ export class StellarAgent {
     const history = [];
     const maxSteps = snapshot ? 1 : Math.max(1, Math.min(50, Number(settings.maxSteps) || 15));
     let consecutiveBlocks = 0;
+    const dismissedChecks = new Set(); // check kinds the user waved through this run
     let tabId = null;
 
     ui.runStarted({ task, snapshot, settings, maxSteps });
@@ -225,9 +227,12 @@ export class StellarAgent {
         this.checkStop();
 
         // CAPTCHA / bot check on screen: hand over to the user, no model call.
-        if (!snapshot && scan.challenge?.pending) {
+        if (!snapshot && scan.challenge?.pending && !dismissedChecks.has(scan.challenge.kind)) {
           bitmap.close?.();
-          await this.waitForHuman(tabId, S, scan.challenge);
+          const outcome = await this.waitForHuman(tabId, S, scan.challenge);
+          // "Continue" while the check still looks pending = the user says there is
+          // nothing to solve (or it can't be detected as solved): don't ask again.
+          if (outcome === "manual") dismissedChecks.add(scan.challenge.kind);
           history.push({ text: `Step ${step}: a ${scan.challenge.kind} appeared and the user completed it by hand.`, sig: "human" });
           continue;
         }

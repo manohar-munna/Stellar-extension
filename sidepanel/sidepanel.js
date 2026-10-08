@@ -783,12 +783,13 @@ const ui = {
     const buttons = h(
       "div",
       { class: "row" },
-      h("button", { class: "btn ok", onclick: () => finish("manual") }, "I've done it — continue"),
+      h("button", { class: "btn ok", onclick: () => finish("manual") }, "Continue"),
       h("button", { class: "btn danger", onclick: () => finish("stop") }, "Stop")
     );
     const node = card(
       { title: "Human verification needed", badge: "mixed", badgeText: "you" },
       h("div", {}, h("b", {}, kind), " is on the page. Stellar doesn't solve CAPTCHAs or bot checks — please complete it yourself in the tab."),
+      h("div", { class: "note" }, "No check on the page? Click Continue — Stellar won't ask about it again during this task."),
       live,
       buttons
     );
