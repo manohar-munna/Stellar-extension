@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>How Stellar Works</title>
+<style>
+  :root {
+    --bg: #f7f7fb; --card: #fff; --text: #171a2b; --muted: #5e6478; --line: #e3e5ee;
+    --dev: #0f7a52; --dev-bg: #e2f5ec; --cloud: #5b3fd6; --cloud-bg: #ece7ff; --you: #9a5b05; --you-bg: #fcefd8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1220; --card: #171b2e; --text: #e8eaf5; --muted: #9aa1bb; --line: #2a2f48;
+      --dev: #4ade9a; --dev-bg: #12301f; --cloud: #b4a2ff; --cloud-bg: #241d47; --you: #f5b85a; --you-bg: #3a2a10;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.55 system-ui, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 32px 16px 56px; }
+  h1 { font-size: 28px; margin: 0 0 6px; }
+  h2 { font-size: 18px; margin: 30px 0 10px; }
+  p { margin: 0 0 10px; }
+  .lead { color: var(--muted); font-size: 16px; }
+  .pipe { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; margin: 14px 0 6px; }
+  .st { border-radius: 10px; padding: 10px 8px; font-size: 13px; text-align: center; border: 1px solid var(--line); background: var(--card); }
+  .st b { display: block; font-size: 14px; }
+  .dev { background: var(--dev-bg); color: var(--dev); border-color: transparent; }
+  .cloud { background: var(--cloud-bg); color: var(--cloud); border-color: transparent; }
+  .legend { font-size: 13px; color: var(--muted); }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+  td:first-child { font-weight: 600; white-space: nowrap; }
+  ul { margin: 0; padding-left: 20px; }
+  li { margin: 4px 0; }
+  code { font-family: ui-monospace, Consolas, monospace; font-size: 13px; background: var(--bg); padding: 1px 5px; border-radius: 5px; }
+  @media (max-width: 640px) {
+    .pipe { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    td:first-child { white-space: normal; }
+    table, tbody, tr, td { display: block; }
+    thead { display: none; }
+    tr { border-bottom: 1px solid var(--line); padding: 6px 0; }
+    td { border: 0; padding: 3px 0; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>How Stellar works</h1>
+  <p class="lead">A Chrome extension that does tasks on web pages for you, while your private data stays on your device. The cloud model only ever sees a redacted screenshot with labels like <code>[EMAIL_01]</code>, never the values. (SIH 2026 · PS 26171 · Team STELLAR_6)</p>
+
+  <h2>One step of a task</h2>
+  <div class="pipe">
+    <div class="st dev"><b>1 Capture</b>screenshot + tag every button / field</div>
+    <div class="st dev"><b>2 Detect</b>find emails, IDs, keys, faces</div>
+    <div class="st dev"><b>3 Redact</b>blur faces, black out secrets, label the rest</div>
+    <div class="st cloud"><b>4 Send</b>sanitized frame + leak check</div>
+    <div class="st cloud"><b>5 Reason</b>Gemini picks one action</div>
+    <div class="st dev"><b>6 Validate</b>local rules approve or block</div>
+    <div class="st dev"><b>7 Execute</b>click / type, real values filled in locally</div>
+  </div>
+  <p class="legend"><span class="chip dev">on device</span> <span class="chip cloud">cloud, sanitized only</span> &nbsp;In <b>Local-first</b> mode a small on-device model decides simple steps (filling known fields, submitting the form it filled) <i>before</i> redaction, so nothing is sent at all. Only uncertain steps go through Detect → Redact → Gemini, and Gemini also checks the finished page.</p>
+
+  <h2>Why it is safe</h2>
+  <div class="card">
+    <ul>
+      <li><b>No network request before redaction.</b> Detection runs on the device; the outgoing text is scanned for any known private value (a leak check) before it is sent.</li>
+      <li><b>Semantic tags, not values.</b> The model types <code>[VAULT_EMAIL]</code>; Stellar swaps in the real email locally, after validation.</li>
+      <li><b>A local gate on every action.</b> Only allowed action types run, and only on real elements. There's a loop guard and approvals for risky clicks. Pasting an on-page secret into an ordinary field is blocked, and tags never go into URLs.</li>
+      <li><b>Page text is treated as data.</b> Instructions planted on a page can't make Stellar leak a secret.</li>
+      <li><b>CAPTCHAs are never solved.</b> Stellar pauses, you tick the box, and it carries on by itself.</li>
+    </ul>
+  </div>
+
+  <h2>Stack — and why each piece works</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>Piece</th><th>What it is</th><th>Why it works</th></tr></thead>
+      <tbody>
+        <tr><td>Extension shell</td><td>Chrome MV3: side panel, content script, <code>captureVisibleTab</code></td><td>Sees exactly what you see in your own signed-in browser. Each element gets a stable tag (Set-of-Marks), so the model picks <code>BUTTON_05</code> rather than guessing pixels.</td></tr>
+        <tr><td>PII detection</td><td>DOM rules: regex, Luhn check, Aadhaar/PAN/IFSC/UPI patterns, field types, vault values</td><td>Deterministic, instant, offline. Field types catch passwords and card numbers even when the page hides their text.</td></tr>
+        <tr><td>Face detection</td><td>MediaPipe BlazeFace (WASM)</td><td>Runs in about 10 ms on the device. It zooms into every image, so small avatars get blurred too.</td></tr>
+        <tr><td>Redaction</td><td>Canvas: blur faces, black out credentials, mask PII with a tag</td><td>The model still knows <i>what</i> was there (an email, a password) and can reason about it, without the value.</td></tr>
+        <tr><td>On-device model</td><td>FastVLM-0.5B · Transformers.js · ONNX Runtime on WebGPU</td><td>About 1 s per decision on a laptop GPU, cached after one download. It makes Local-first and fully offline mode possible, and unloads itself when idle.</td></tr>
+        <tr><td>Cloud model</td><td>Gemini REST with JSON output, key rotation and model fallback</td><td>Strong reasoning for links, menus, reading pages and the final check. It only ever gets sanitized frames.</td></tr>
+        <tr><td>Real input</td><td><code>chrome.debugger</code> mouse and keyboard</td><td>Trusted clicks and typing work on React fields, code editors (Monaco and CodeMirror, via their API or a paste), custom dropdowns and autofilled logins.</td></tr>
+        <tr><td>Private vault</td><td>Local key=value store; import from images, PDF, .docx, .vcf (pdf.js, on-device OCR)</td><td>Forms get filled from your data without the AI seeing it. A missing required detail is asked once, then saved.</td></tr>
+        <tr><td>Panel state</td><td>IndexedDB (browser storage) inside the extension</td><td>Tasks survive closing the panel. Unredacted captures are never written to disk.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Who decides each step</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>Mode</th><th>Behaviour</th></tr></thead>
+      <tbody>
+        <tr><td>Local-first (default)</td><td>On-device when sure; otherwise redact and ask Gemini. Gemini always does the final check.</td></tr>
+        <tr><td>Gemini-first</td><td>Gemini decides; the on-device model takes over if Gemini fails.</td></tr>
+        <tr><td>On-device only</td><td>Nothing leaves the laptop. Works with Wi-Fi off.</td></tr>
+        <tr><td>Safe / Autopilot</td><td>Safe asks before risky actions. Autopilot only stops for real questions and CAPTCHAs.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</main>
+</body>
+</html>
