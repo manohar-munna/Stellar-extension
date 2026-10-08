@@ -5,7 +5,7 @@ import { StellarAgent, describeAction } from "./agent.js";
 import { loadSettings, saveSettings, DEFAULTS } from "./settings.js";
 import { listModels } from "./gemini.js";
 import { CATEGORY_COLORS } from "./privacy.js";
-import { loadLocalModel, onLocalState, isLocalModelCached, localState, LOCAL_MODEL } from "./local/vlm.js";
+import { loadLocalModel, onLocalState, isLocalModelCached, localState, LOCAL_MODEL, configureAutoUnload } from "./local/vlm.js";
 import { extractFromFile, mergeIntoVault, VAULT_FIELDS } from "./vault-import.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -953,6 +953,7 @@ async function openSettings() {
   document.querySelector(`input[name=pace][value=${s.pace || "guided"}]`).checked = true;
   document.querySelector(`input[name=localBackup][value=${s.localBackup || "auto"}]`).checked = true;
   $("#localPreload").checked = s.localPreload !== false;
+  (document.querySelector(`input[name=localUnload][value="${s.localUnloadMinutes ?? 10}"]`) || document.querySelector("input[name=localUnload][value='10']")).checked = true;
   $("#vaultGemini").checked = s.vaultExtract === "gemini";
   $("#vaultReview").replaceChildren();
   $("#askRisky").checked = s.askRisky;
@@ -1003,11 +1004,13 @@ $("#saveSettings").addEventListener("click", async () => {
     pace: document.querySelector("input[name=pace]:checked")?.value || "guided",
     localBackup: document.querySelector("input[name=localBackup]:checked")?.value || "auto",
     localPreload: $("#localPreload").checked,
+    localUnloadMinutes: Number(document.querySelector("input[name=localUnload]:checked")?.value ?? 10),
     vaultExtract: $("#vaultGemini").checked ? "gemini" : "local",
     askRisky: $("#askRisky").checked,
     maxSteps: Math.max(1, Math.min(50, parseInt($("#maxSteps").value, 10) || 15)),
     vault: $("#vault").value,
   });
+  configureAutoUnload(Number(document.querySelector("input[name=localUnload]:checked")?.value ?? 10));
   $("#saveStatus").textContent = "Saved ✓";
   setTimeout(() => (drawer.hidden = true), 500);
 });
@@ -1024,13 +1027,24 @@ onLocalState((st) => {
         ? `Loading… ${pct ? `${pct}%` : ""}`
         : st.status === "error"
           ? `Failed: ${st.error}`
-          : "Not loaded";
+          : st.status === "unloaded"
+            ? `Unloaded${st.unloadedAfterMin ? ` after ${st.unloadedAfterMin} min idle` : ""} · memory freed`
+            : "Not loaded";
   $("#localStatus").textContent = text;
   $("#localStatus").className = `local-status ${st.status}`;
   $("#localBar").style.width = `${st.status === "ready" ? 100 : pct}%`;
   $("#localLoad").disabled = st.status === "loading" || st.status === "ready";
-  $("#localLoad").textContent = st.status === "ready" ? "Loaded" : st.status === "loading" ? "Loading…" : "Download & load";
-  localChip.textContent = st.status === "ready" ? "on-device: ready" : st.status === "loading" ? `on-device: ${pct}%` : st.status === "error" ? "on-device: error" : "on-device: off";
+  $("#localLoad").textContent = st.status === "ready" ? "Loaded" : st.status === "loading" ? "Loading…" : st.status === "unloaded" ? "Load again" : "Download & load";
+  localChip.textContent =
+    st.status === "ready"
+      ? "on-device: ready"
+      : st.status === "loading"
+        ? `on-device: ${pct}%`
+        : st.status === "error"
+          ? "on-device: error"
+          : st.status === "unloaded"
+            ? "on-device: unloaded"
+            : "on-device: off";
   localChip.dataset.state = st.status;
 });
 $("#localLoad").addEventListener("click", () => loadLocalModel().catch(() => {}));
@@ -1100,6 +1114,7 @@ function renderVaultReview(fields, notes) {
   const s = await loadSettings();
   applyPresenter(s.presenter);
   applyTheme(s.theme || "system");
+  configureAutoUnload(s.localUnloadMinutes ?? 10);
   // Warm the on-device model in the background once it has been downloaded.
   if (s.localBackup !== "off" && s.localPreload !== false && (await isLocalModelCached())) loadLocalModel().catch(() => {});
   if (!s.apiKey) {

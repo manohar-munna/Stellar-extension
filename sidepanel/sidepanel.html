@@ -184,6 +184,16 @@
             <span><b>Preload when the panel opens</b><small>After the first download, warm it up in the background.</small></span>
             <input id="localPreload" class="switch" type="checkbox" />
           </label>
+          <div class="set-field">
+            <span class="set-label">Unload when idle</span>
+            <div class="segmented" role="radiogroup" aria-label="Unload when idle">
+              <label><input type="radio" name="localUnload" value="5" /><span>5 min</span></label>
+              <label><input type="radio" name="localUnload" value="10" /><span>10 min</span></label>
+              <label><input type="radio" name="localUnload" value="30" /><span>30 min</span></label>
+              <label><input type="radio" name="localUnload" value="0" /><span>Never</span></label>
+            </div>
+            <p class="set-hint">Frees about 4 GB of RAM and 2 GB of GPU memory when the model isn't being used. It reloads automatically from the browser cache when needed (a few seconds), and never unloads during a task.</p>
+          </div>
         </section>
 
         <!-- ------------------------------------------------------------- Agent -->

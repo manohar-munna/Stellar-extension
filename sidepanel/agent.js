@@ -8,7 +8,7 @@ import { buildRegions, parseVault, knownSecrets, scrubText, scrubUrl, leakCheck,
 import { loadBitmap, renderDetection, renderSanitized, encodeJpeg } from "./redact.js";
 import { validateAction } from "./validate.js";
 import { localDecide } from "./local/planner.js";
-import { LOCAL_MODEL } from "./local/vlm.js";
+import { LOCAL_MODEL, holdLocalModel, loadLocalModel } from "./local/vlm.js";
 
 const NEW_TAB_URL = /^(chrome:\/\/(newtab|new-tab-page)|chrome-search:\/\/|about:blank|edge:\/\/newtab)/;
 
@@ -161,6 +161,10 @@ export class StellarAgent {
     let tabId = null;
 
     ui.runStarted({ task, snapshot, settings, maxSteps });
+    // Never auto-unload the on-device model in the middle of a run.
+    const holdModel = settings.localBackup !== "off" && !snapshot;
+    if (holdModel) holdLocalModel(true);
+    if (localOnly && !snapshot) loadLocalModel().catch(() => {}); // warm up while the first frame is captured
 
     try {
       if (!settings.apiKey && !localOnly && (!snapshot || settings.detector === "vision")) {
@@ -479,6 +483,7 @@ export class StellarAgent {
       if (e instanceof StopError || this.stopped) ui.finish({ ok: false, message: "Stopped." });
       else ui.finish({ ok: false, message: e.message || String(e) });
     } finally {
+      if (holdModel) holdLocalModel(false);
       this.running = false;
       ui.setStage(null);
       try {

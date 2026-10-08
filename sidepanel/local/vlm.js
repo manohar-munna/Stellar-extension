@@ -6,7 +6,16 @@ let worker = null;
 let seq = 0;
 const calls = new Map();
 const listeners = new Set();
-export const localState = { status: "idle", device: null, loadMs: null, error: null, progress: 0 };
+export const localState = { status: "idle", device: null, loadMs: null, error: null, progress: 0, unloadedAfterMin: null };
+
+// ---------------------------------------------------------- auto-unload
+// A loaded model holds ~4 GB of RAM and ~2 GB of GPU memory. After a period
+// with no use it is unloaded by terminating its worker (which releases all of
+// it at once); the next request reloads it from the browser cache.
+let unloadMs = 10 * 60_000;
+let idleTimer = null;
+let holds = 0; // >0 while a run that may need the model is in progress
+let lastUsed = 0;
 
 function emit() {
   for (const fn of listeners) fn({ ...localState });
@@ -16,6 +25,45 @@ export function onLocalState(fn) {
   listeners.add(fn);
   fn({ ...localState });
   return () => listeners.delete(fn);
+}
+
+function armIdleTimer() {
+  clearTimeout(idleTimer);
+  idleTimer = null;
+  if (!unloadMs || holds || calls.size || localState.status !== "ready") return;
+  const wait = Math.max(1000, unloadMs - (Date.now() - lastUsed));
+  idleTimer = setTimeout(() => unloadLocalModel("idle"), wait);
+}
+
+/** Minutes of inactivity before the model is unloaded; 0 = never. */
+export function configureAutoUnload(minutes) {
+  const m = Number(minutes);
+  unloadMs = m > 0 ? m * 60_000 : 0;
+  armIdleTimer();
+}
+
+/** Keep the model loaded while a run is in progress (call with true, then false). */
+export function holdLocalModel(on) {
+  holds = Math.max(0, holds + (on ? 1 : -1));
+  if (!on) lastUsed = Date.now();
+  armIdleTimer();
+}
+
+/** Free the model's RAM and GPU memory now. Returns false if it is busy. */
+export function unloadLocalModel(reason = "manual") {
+  if (!worker) return true;
+  if (calls.size || holds) return false;
+  clearTimeout(idleTimer);
+  worker.terminate();
+  worker = null;
+  Object.assign(localState, {
+    status: "unloaded",
+    device: null,
+    progress: 0,
+    unloadedAfterMin: reason === "idle" ? Math.round(unloadMs / 60_000) : null,
+  });
+  emit();
+  return true;
 }
 
 function ensureWorker() {
@@ -31,7 +79,9 @@ function ensureWorker() {
     if (!call) return;
     calls.delete(data.id);
     clearTimeout(call.timer);
+    lastUsed = Date.now();
     data.ok ? call.resolve(data.result) : call.reject(new Error(data.error));
+    armIdleTimer();
   };
   worker.onerror = (e) => {
     localState.status = "error";
@@ -46,10 +96,12 @@ function ensureWorker() {
 function call(op, payload = {}, timeoutMs = 120_000, transfer = []) {
   const w = ensureWorker();
   const id = ++seq;
+  clearTimeout(idleTimer);
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       calls.delete(id);
       reject(new Error(`On-device model timed out (${op})`));
+      armIdleTimer();
     }, timeoutMs);
     calls.set(id, { resolve, reject, timer });
     w.postMessage({ id, op, ...payload }, transfer);
@@ -58,9 +110,10 @@ function call(op, payload = {}, timeoutMs = 120_000, transfer = []) {
 
 /** Download (first time) and initialise the model. Safe to call repeatedly. */
 export async function loadLocalModel() {
-  if (localState.status === "ready") return localState;
+  if (localState.status === "ready" && worker) return localState;
   localState.status = "loading";
   localState.error = null;
+  localState.unloadedAfterMin = null;
   emit();
   try {
     // First download is ~670 MB, allow plenty of time.
@@ -71,7 +124,9 @@ export async function loadLocalModel() {
     emit();
     throw e;
   }
+  lastUsed = Date.now();
   emit();
+  armIdleTimer();
   return localState;
 }
 

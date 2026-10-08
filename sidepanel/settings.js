@@ -21,6 +21,8 @@ export const DEFAULTS = {
   // only (nothing sent to the cloud), "off" = never.
   localBackup: "auto",
   localPreload: true,
+  // Unload the on-device model after this many idle minutes (0 = never).
+  localUnloadMinutes: 10,
   // Vault import: "local" (on-device) or "gemini" (uploads the document).
   vaultExtract: "local",
   vault: "",
