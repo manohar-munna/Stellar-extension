@@ -251,6 +251,47 @@ export class StellarAgent {
           continue;
         }
 
+        // ------------------------------------------- LABEL + ON-DEVICE DECISION
+        // The frame only gets element tags here — no redaction — because it does
+        // not leave the device. Detect → Redact → Send run only if the step has
+        // to go to Gemini (PS 26171: sanitize before any network request).
+        const tryLocal = !snapshot && (localFirst || localOnly);
+        let decision = null;
+        let localWhy = "";
+        let elements;
+        let secrets;
+        let regions;
+        if (tryLocal) {
+          ui.setStage("reason");
+          const labelled = scan.elements.map((e) => ({ ...e, label: e.name }));
+          const labelledFrame = encodeJpeg(renderSanitized(bitmap, scan.viewport, [], labelled), 1280, 0.85);
+          ui.status(`On-device ${LOCAL_MODEL.name} is looking at the labelled frame…`);
+          let pick = null;
+          try {
+            await loadLocalModel();
+            const imageBlob = await (await fetch(labelledFrame.dataUrl)).blob();
+            const d = await localDecide({ task, elements: labelled, history, vault, imageBlob, mode: localFirst ? "first" : "backup" });
+            if (d.confident) pick = d;
+            else localWhy = d.reason;
+          } catch (err) {
+            if (localOnly) throw new Error(`On-device model failed: ${err.message}`);
+            localWhy = `on-device model unavailable (${err.message})`;
+          }
+          this.checkStop();
+          if (pick) {
+            const vaultSecrets = knownSecrets([], vault);
+            // Step history can reach Gemini later, so labels are scrubbed of vault values and known patterns.
+            elements = labelled.map((e) => ({ ...e, label: scrubText(e.name, vaultSecrets) }));
+            secrets = vaultSecrets;
+            regions = [];
+            decision = pick;
+            bitmap.close?.();
+            ui.skipStages(S, ["detect", "redact", "send"]);
+            await ui.card(S, "reason", { model: pick.model, latencyMs: pick.latencyMs, decision: pick, local: true, localFirst, localOnly, labelled: labelledFrame.dataUrl });
+          }
+        }
+
+        if (!decision) {
         // ----------------------------------------------------------- 2 DETECT
         ui.setStage("detect");
         const t1 = performance.now();
@@ -291,8 +332,8 @@ export class StellarAgent {
         } catch (e) {
           ui.note(`On-device face detector unavailable (${String(e.message || e).slice(0, 100)}) — faces on this frame are not blurred.`);
         }
-        const regions = buildRegions({ domPii: scan.pii, vision, local: faces, viewport: scan.viewport });
-        const secrets = knownSecrets(regions, vault);
+        regions = buildRegions({ domPii: scan.pii, vision, local: faces, viewport: scan.viewport });
+        secrets = knownSecrets(regions, vault);
         const detectCanvas = renderDetection(bitmap, scan.viewport, regions);
         await ui.card(S, "detect", {
           ms: Math.round(performance.now() - t1),
@@ -309,7 +350,7 @@ export class StellarAgent {
         // ----------------------------------------------------------- 3 REDACT
         ui.setStage("redact");
         const t2 = performance.now();
-        const elements = scan.elements.map((e) => {
+        elements = scan.elements.map((e) => {
           const cover = regions.find((r) => coverage(e.rect, r.rect) > 0.5);
           const label = cover && e.kind !== "INPUT" ? `[${cover.tag}]` : scrubText(e.name, secrets);
           const options = e.options?.map((o) => scrubText(o, secrets));
@@ -329,21 +370,6 @@ export class StellarAgent {
 
         // ------------------------------------------------------------- 4 SEND
         ui.setStage("send");
-        // Local-first: let the on-device model try before anything is sent.
-        let localPick = null;
-        let localWhy = "";
-        if (localFirst) {
-          ui.status(`On-device ${LOCAL_MODEL.name} is checking whether it can decide this step…`);
-          try {
-            await loadLocalModel();
-            const imageBlob = await (await fetch(sanitized.dataUrl)).blob();
-            const d = await localDecide({ task, elements, history, vault, imageBlob, mode: "first" });
-            if (d.confident) localPick = d;
-            else localWhy = d.reason;
-          } catch (err) {
-            localWhy = `on-device model unavailable (${err.message})`;
-          }
-        }
         const page = { title: scrubText(scan.title, secrets), url: scrubUrl(scan.url, secrets), viewport: scan.viewport };
         const prompt = buildStepPrompt({
           task: scrubText(task, secrets, { generic: false }),
@@ -353,7 +379,7 @@ export class StellarAgent {
           regions,
           vaultTags: vault.map((v) => v.tag),
           elements,
-          history: history.map((h) => h.text),
+          history: history.map((h) => scrubText(h.text, secrets)),
         });
         const leaks = leakCheck(AGENT_SYSTEM + "\n" + prompt, secrets);
         const payloadPreview = {
@@ -379,9 +405,8 @@ export class StellarAgent {
           secretCount: secrets.length,
           snapshot,
           localOnly,
-          keptLocal: !!localPick,
         });
-        if (leaks.length && !localPick && !localOnly) {
+        if (leaks.length) {
           throw new Error(`Leak check failed: ${leaks.map((t) => `[${t}]`).join(", ")} found in outbound text. Nothing was sent.`);
         }
         if (snapshot) {
@@ -395,7 +420,6 @@ export class StellarAgent {
         // ----------------------------------------------------------- 5 REASON
         ui.setStage("reason");
         await this.cs(tabId, { op: "overlay", visible: true, message: "Stellar is thinking…" });
-        let decision;
         const decideLocally = async (why) => {
           if (why) ui.note(why);
           ui.status(`On-device ${LOCAL_MODEL.name} is choosing the next action…`);
@@ -406,10 +430,7 @@ export class StellarAgent {
             throw new Error(`On-device model failed too: ${err.message}`);
           }
         };
-        if (localPick) {
-          decision = localPick;
-          await ui.card(S, "reason", { model: decision.model, latencyMs: decision.latencyMs, decision, local: true, localFirst: true });
-        } else if (localOnly) {
+        if (localOnly) {
           decision = await decideLocally();
           await ui.card(S, "reason", { model: decision.model, latencyMs: decision.latencyMs, decision, local: true, localOnly: true });
         } else {
@@ -434,6 +455,8 @@ export class StellarAgent {
             await ui.card(S, "reason", { model: decision.model, latencyMs: decision.latencyMs, decision, local: true, fallback: e.message });
           }
         }
+        } // end of the redaction path (Detect → Redact → Send → Reason in the cloud)
+
         const proposed = decision?.action || {};
         if (decision?.status) ui.status(decision.status);
         this.checkStop();

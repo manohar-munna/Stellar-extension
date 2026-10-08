@@ -124,7 +124,7 @@ first time on a fast connection. Do this before a demo.
 
 | Mode | What happens |
 | --- | --- |
-| **Local-first** (default) | The on-device model decides when it is clearly sure — a determined fill (vault field, a message the task states, a dropdown option that matches, a search term) or a click that the ranking and FastVLM agree on. Only otherwise is Gemini called, on sanitized data, as PS 26171 describes. On the demo billing task 5 of 6 steps stay on the device; Gemini only confirms the task is done (12 s instead of ~30 s). Each Gemini card says why the on-device model wasn't sure. |
+| **Local-first** (default) | Each step: **capture + label** (element tags drawn on the frame) → the on-device model tries. If it is sure — a determined fill (vault field, a message the task states, a matching dropdown option, a search term) or submitting the form it just filled — it acts **without redaction, because nothing leaves the device**. Otherwise **Detect → Redact → Send** run and Gemini decides on the sanitized frame. Links, results and menus are left to Gemini, and Gemini always does the **final verification** on a redacted frame. Demo billing task: 5 of 6 steps on-device (13 s); live Wikipedia: search on-device, reading and answer by Gemini (7 s). Each Gemini card says why the cloud was needed. |
 | **Gemini-first** | Gemini decides every step; the on-device model takes over if Gemini fails, so the demo keeps going. |
 | **On-device** | Nothing is sent to the cloud at all; FastVLM plans every step. Best for form-style tasks. |
 | **Gemini only** | No on-device decisions. |

@@ -304,14 +304,16 @@ const RENDER = {
     const local = !!d.local;
     return card(
       {
-        title: local ? (d.localFirst ? "Reason (on-device, confident)" : d.localOnly ? "Reason (on-device)" : "Reason (on-device backup)") : "Reason",
+        title: local ? (d.localFirst ? "Reason (on-device, confident)" : d.localOnly ? "Reason (on-device)" : "Reason (on-device backup)") : /final verification/.test(d.whyCloud || "") ? "Reason (cloud · final verification)" : "Reason",
         badge: local ? "local" : "cloud",
         badgeText: local ? "on-device" : "cloud",
         meta: `${d.latencyMs} ms`,
         cloud: !local,
       },
       d.fallback ? h("div", { class: "note warn" }, `Gemini failed (${d.fallback.slice(0, 160)}) — ${LOCAL_MODEL.name} decided this step on your device.`) : null,
-      d.whyCloud ? h("div", { class: "note" }, `On-device model wasn't sure: ${d.whyCloud} → asked Gemini.`) : null,
+      d.whyCloud ? h("div", { class: "note" }, `Why the cloud: ${d.whyCloud}.`) : null,
+      d.labelled ? shot(d.labelled, true) : null,
+      d.labelled ? h("div", { class: "note" }, "Labelled frame — element tags only, no redaction needed: it never left this device.") : null,
       h("div", { class: "thought" }, h("b", {}, "Sees: "), d.decision?.observation || "—"),
       h("div", { class: "thought" }, h("b", {}, local ? "Considered: " : "Plans: "), d.decision?.thought || "—"),
       h("div", {}, h("span", { class: "action-pill" }, "⇢ ", describeAction(a))),
@@ -681,6 +683,15 @@ const ui = {
     run.log.steps[run.log.steps.length - 1].cards.push({ stage, ...exportable(stage, data) });
     if (ph && follow.on) glideTo(node);
     return data.pending ? Promise.resolve() : dwell(run, stage);
+  },
+
+  /** Stages not needed this step (the on-device model decided): no redaction, nothing sent. */
+  skipStages(S, stages) {
+    for (const st of stages) S.stages.set(st, "skipped");
+    removePlaceholders(activeRun);
+    setBrief(S, "hidden", "local", "Hidden", h("span", { class: "dim" }, "redaction not needed — the frame never left this device"));
+    setBrief(S, "sent", "local", "Sent", h("span", { class: "dim" }, "nothing — decided on-device"));
+    renderStageBar(activeRun, S);
   },
 
   /** Fill the step's short brief from a stage's data. */

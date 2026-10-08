@@ -70,6 +70,8 @@ export function rankCandidates({ task, elements, history, vaultTags }) {
   const tw = words(task);
   const acted = actedTags(history);
   const pendingInForm = new Map(); // form index -> fields still to handle
+  const query = searchQuery(task);
+  const searched = !!query && history.some((h) => /→ ok/.test(h.text) && h.text.includes(`"${query}"`));
 
   const scored = elements
     .filter((e) => !e.disabled && !acted.has(e.tag))
@@ -79,7 +81,7 @@ export function rankCandidates({ task, elements, history, vaultTags }) {
       if (e.kind === "INPUT") {
         if (e.filled) score -= 5;
         if (vault && /vault|my |me\b|mine/i.test(task)) score += 3;
-        if (/search/i.test(e.label) && searchQuery(task)) score += 3;
+        if (/search/i.test(e.label) && query && !searched) score += 3;
         if (/message|comment|description|details|note|reason|why/i.test(e.label) && /ask|say|tell|message|write|request|explain|mention/i.test(task)) score += messageFromTask(task) ? 3 : 2;
         if (e.sensitive) score -= 2;
       }
@@ -90,7 +92,7 @@ export function rankCandidates({ task, elements, history, vaultTags }) {
       if (e.kind === "BUTTON" && SUBMIT.test(e.label)) score += 1;
       if (DESTRUCTIVE.test(e.label) && !overlap(words(e.label), tw)) score -= 4;
       if (e.kind === "LINK") score -= 0.5;
-      const cand = { e, vault, score: score - idx * 0.01 };
+      const cand = { e, vault, searchOk: !!query && !searched && /search/i.test(e.label), score: score - idx * 0.01 };
       if ((e.kind === "INPUT" && !e.filled && score > 0) || (e.kind === "SELECT" && score > 0)) {
         if (e.form != null) pendingInForm.set(e.form, (pendingInForm.get(e.form) || 0) + 1);
       }
@@ -183,7 +185,7 @@ function missingRequiredVault({ task, elements, history, vaultTags, ranked }) {
 /** A fill whose value is fully determined without drafting anything. */
 function determinedFill(c, task) {
   const e = c.e;
-  if (e.kind === "INPUT") return !!(c.vault || (/search/i.test(e.label) && searchQuery(task)) || (/message|comment|description|details|note|reason|why/i.test(e.label) && messageFromTask(task)));
+  if (e.kind === "INPUT") return !!(c.vault || c.searchOk || (/message|comment|description|details|note|reason|why/i.test(e.label) && messageFromTask(task)));
   if (e.kind === "SELECT") return !!pickOption(e.options, task);
   return false;
 }
@@ -198,7 +200,7 @@ async function buildAction(choice, task, imageBlob, allowDraft) {
   const action = { target: e.tag };
   if (e.kind === "INPUT") {
     action.type = "type";
-    const q = /search/i.test(e.label) ? searchQuery(task) : null;
+    const q = choice.searchOk ? searchQuery(task) : null;
     if (choice.vault) action.text = `[${choice.vault}]`;
     else if (q) {
       action.text = q;
@@ -268,7 +270,7 @@ export async function localDecide({ task, elements, history, vault, imageBlob, m
   }
 
   if (!viable.length) {
-    if (first) return notSure("nothing on this page clearly matches the task — Gemini decides whether the task is done");
+    if (first) return notSure("final verification — Gemini checks the finished page on a redacted frame and writes the answer");
     return out({
       confident: true,
       observation: "No remaining element matches the task.",
@@ -313,6 +315,12 @@ export async function localDecide({ task, elements, history, vault, imageBlob, m
         action,
       });
     }
+  }
+
+  if (first) {
+    const actedForms = new Set(elements.filter((e) => actedTags(history).has(e.tag) && e.form != null).map((e) => e.form));
+    const finishesForm = top.e.kind === "BUTTON" && SUBMIT.test(top.e.label) && top.e.form != null && actedForms.has(top.e.form);
+    if (!finishesForm) return notSure(`choosing "${top.e.label}" needs judgement — Gemini picks links, results and menus`);
   }
 
   // FastVLM chooses among the top candidates while looking at the sanitized frame.
