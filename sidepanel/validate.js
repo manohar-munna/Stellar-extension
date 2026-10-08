@@ -21,7 +21,8 @@ export async function validateAction(proposed, { inspect, elements, secrets, set
   const checks = [];
   const pass = (label) => checks.push({ ok: true, level: "pass", label });
   const warn = (label) => checks.push({ ok: true, level: "warn", label });
-  const confirm = (label) => checks.push({ ok: false, level: "confirm", label });
+  // `hard` confirms are never auto-approved, even in Autopilot (they become blocks).
+  const confirm = (label, hard = false) => checks.push({ ok: false, level: "confirm", label, hard });
   const block = (label) => checks.push({ ok: false, level: "block", label });
 
   const action = { ...(proposed || {}) };
@@ -106,7 +107,8 @@ export async function validateAction(proposed, { inspect, elements, secrets, set
           confirm(
             critical.length
               ? `Paste on-page secret ${list} into "${known.label}"? This copies a credential/ID value into the page${info.sensitive ? "" : " — and the field is not a password/secret field"}.`
-              : `Copy on-page value ${list} into "${known.label}"?`
+              : `Copy on-page value ${list} into "${known.label}"?`,
+            critical.length > 0 && !info.sensitive // credential into an ordinary field: classic exfiltration
           );
         }
       }
@@ -159,6 +161,20 @@ export async function validateAction(proposed, { inspect, elements, secrets, set
   return finish();
 
   function finish() {
+    // Autopilot: nothing waits for the user, except what is never safe to auto-approve.
+    if (settings.autopilot) {
+      for (const c of checks) {
+        if (c.level !== "confirm") continue;
+        if (c.hard) {
+          c.level = "block";
+          c.label = `${c.label} — blocked in Autopilot (switch to Safe mode to approve it yourself)`;
+        } else {
+          c.ok = true;
+          c.level = "auto";
+          c.label = `Auto-approved (Autopilot): ${c.label}`;
+        }
+      }
+    }
     const verdict = checks.some((c) => c.level === "block") ? "block" : checks.some((c) => c.level === "confirm") ? "confirm" : "allow";
     const reason = checks.filter((c) => !c.ok).map((c) => c.label).join("; ");
     return { verdict, checks, action, displayText, reason, sig };

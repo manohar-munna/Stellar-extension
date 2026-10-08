@@ -80,12 +80,12 @@ export function rankCandidates({ task, elements, history, vaultTags }) {
         if (e.filled) score -= 5;
         if (vault && /vault|my |me\b|mine/i.test(task)) score += 3;
         if (/search/i.test(e.label) && searchQuery(task)) score += 3;
-        if (/message|comment|description|details|note|reason/i.test(e.label) && /ask|say|tell|message|write|request|explain|mention/i.test(task)) score += 2;
+        if (/message|comment|description|details|note|reason|why/i.test(e.label) && /ask|say|tell|message|write|request|explain|mention/i.test(task)) score += messageFromTask(task) ? 3 : 2;
         if (e.sensitive) score -= 2;
       }
       if (e.kind === "SELECT") {
         const optHit = Math.max(0, ...(e.options || []).map((o) => overlap(words(o), tw)));
-        score += optHit * 2.5;
+        score += optHit * 3;
       }
       if (e.kind === "BUTTON" && SUBMIT.test(e.label)) score += 1;
       if (DESTRUCTIVE.test(e.label) && !overlap(words(e.label), tw)) score -= 4;
@@ -149,94 +149,78 @@ function messageFromTask(task) {
   return `Hello, I would like to ${body}. Thank you.`;
 }
 
+/** Vault keys a field label asks for ([] when it isn't personal data). */
+export function vaultKeysFor(label) {
+  for (const [re, keys] of FIELD_MAP) if (re.test(label)) return keys;
+  return [];
+}
+
+const KEY_WORDS = { EMAIL: "email address", PHONE: "phone number", NAME: "full name", FIRST_NAME: "first name", LAST_NAME: "last name", DOB: "date of birth", ADDRESS: "address", CITY: "city", STATE: "state", PINCODE: "PIN code", COUNTRY: "country", COMPANY: "company", PAN: "PAN", AADHAAR: "Aadhaar number", PASSPORT: "passport number", GENDER: "gender" };
+
 /**
- * Decide the next action on-device.
- * @returns {Promise<{observation, thought, status, action, local: true, model, latencyMs}>}
+ * A required field that needs personal data the vault doesn't have, in a form
+ * the task is working on: the user has to supply it (and it gets saved).
  */
-export async function localDecide({ task, elements, history, vault, imageBlob }) {
-  const t0 = performance.now();
-  const vaultTags = vault.map((v) => v.tag);
-  const ranked = rankCandidates({ task, elements, history, vaultTags });
-  const viable = ranked.filter((c) => c.score > 0);
-  const actedCount = actedTags(history).size;
-
-  const finish = (answer, why) => ({
-    observation: why,
-    thought: "On-device backup planner found nothing relevant left to do.",
-    status: "Finished (on-device backup)",
-    action: { type: "done", final_answer: answer },
-  });
-
-  if (!viable.length) {
-    return {
-      ...finish(
-        actedCount ? `Completed ${actedCount} action(s) with the on-device backup model. Please review the page.` : "The on-device backup model could not find a relevant action for this task on this page.",
-        "No remaining element matches the task."
-      ),
-      local: true,
-      model: LOCAL_MODEL.name,
-      latencyMs: Math.round(performance.now() - t0),
-    };
+function missingRequiredVault({ task, elements, history, vaultTags, ranked }) {
+  const acted = actedTags(history);
+  const asked = new Set(history.filter((h) => h.vaultKey).map((h) => h.vaultKey));
+  // Forms the task is clearly working on: ones holding a relevant candidate, or already touched.
+  const activeForms = new Set([
+    ...ranked.filter((c) => c.score >= 2 && c.e.form != null).map((c) => c.e.form),
+    ...elements.filter((e) => acted.has(e.tag) && e.form != null).map((e) => e.form),
+  ]);
+  const fillTask = /vault|my (details|info|data)|fill|form|apply|register|sign ?up|ticket|contact|book|checkout|profile/i.test(task);
+  for (const e of elements) {
+    if (e.kind !== "INPUT" || !e.required || e.filled || e.sensitive || acted.has(e.tag)) continue;
+    if (!(e.form != null ? activeForms.has(e.form) : fillTask)) continue;
+    const keys = vaultKeysFor(e.label);
+    if (!keys.length || keys.some((k) => vaultTags.includes(`VAULT_${k}`)) || asked.has(keys[0])) continue;
+    return { e, key: keys[0] };
   }
+  return null;
+}
 
-  // FastVLM chooses among the top candidates while looking at the sanitized frame.
-  // "Goal complete" is only an option once no strongly-matching action remains.
-  const shortlist = viable.slice(0, 5);
-  const canFinish = actedCount > 0 && !viable.some((c) => c.score >= 3);
-  const q = `You are helping a user on a web page. Goal: ${task}
-Already done: ${history.length ? history.slice(-6).map((h) => h.text.replace(/^Step \d+: /, "")).join("; ") : "nothing yet"}.
-Which ONE action should happen next?
-${shortlist.map((c, i) => `${i + 1}. ${describe(c.e)}`).join("\n")}${canFinish ? `\n${shortlist.length + 1}. The goal is complete` : ""}
-Answer with the number only.`;
-  let choice = shortlist[0];
-  let vlmNote = "heuristic top choice";
-  try {
-    const r = await askLocal(imageBlob, q, 4);
-    const n = parseInt((r.text.match(/\d+/) || [])[0], 10);
-    if (n >= 1 && n <= shortlist.length) {
-      choice = shortlist[n - 1];
-      vlmNote = `FastVLM picked option ${n} of ${shortlist.length + 1}`;
-    } else if (n === shortlist.length + 1 && canFinish) {
-      return {
-        ...finish(`Completed ${actedCount} action(s) with the on-device backup model.`, "FastVLM judged the goal complete."),
-        local: true,
-        model: LOCAL_MODEL.name,
-        latencyMs: Math.round(performance.now() - t0),
-      };
-    }
-  } catch (e) {
-    vlmNote = `model unavailable (${e.message}) — used heuristic ranking`;
-  }
+/** A fill whose value is fully determined without drafting anything. */
+function determinedFill(c, task) {
+  const e = c.e;
+  if (e.kind === "INPUT") return !!(c.vault || (/search/i.test(e.label) && searchQuery(task)) || (/message|comment|description|details|note|reason|why/i.test(e.label) && messageFromTask(task)));
+  if (e.kind === "SELECT") return !!pickOption(e.options, task);
+  return false;
+}
 
-  // Arguments for the chosen action.
+/**
+ * Work out an action's arguments. With `allowDraft` false only deterministic
+ * values are used (vault tag, search term, message stated in the task, an
+ * option that matches the task); returns null when it would have to invent one.
+ */
+async function buildAction(choice, task, imageBlob, allowDraft) {
   const e = choice.e;
   const action = { target: e.tag };
   if (e.kind === "INPUT") {
     action.type = "type";
-    const q2 = /search/i.test(e.label) ? searchQuery(task) : null;
+    const q = /search/i.test(e.label) ? searchQuery(task) : null;
     if (choice.vault) action.text = `[${choice.vault}]`;
-    else if (q2) {
-      action.text = q2;
+    else if (q) {
+      action.text = q;
       action.submit = true;
     } else {
-      // If the task already says what to write ("asking to X"), use that verbatim;
-      // otherwise let FastVLM draft it.
       action.text = messageFromTask(task);
       if (!action.text) {
+        if (!allowDraft) return null;
         try {
-          const r = await askLocal(imageBlob, `The user wants to: ${task}
-Write the short, polite text (one or two sentences) they would type into the "${e.label}" box, in their own voice. Output only that text.`, 70);
+          const r = await askLocal(imageBlob, `The user wants to: ${task}\nWrite the short, polite text (one or two sentences) they would type into the "${e.label}" box, in their own voice. Output only that text.`, 70);
           action.text = cleanText(r.text, task);
         } catch {
           action.text = "";
         }
+        if (!action.text) action.text = task;
       }
-      if (!action.text) action.text = task;
     }
   } else if (e.kind === "SELECT") {
     action.type = "select";
     let opt = pickOption(e.options, task);
     if (!opt && e.options?.length) {
+      if (!allowDraft) return null;
       const opts = e.options.slice(0, 10);
       try {
         const r = await askLocal(imageBlob, `Goal: ${task}\nWhich option fits best for "${e.label}"?\n${opts.map((o, i) => `${i + 1}. ${o}`).join("\n")}\nAnswer with the number only.`, 4);
@@ -250,14 +234,126 @@ Write the short, polite text (one or two sentences) they would type into the "${
   } else {
     action.type = "click";
   }
+  return action;
+}
 
-  return {
+/**
+ * Decide the next action on-device.
+ * mode "backup": always returns a decision (Gemini is unavailable).
+ * mode "first":  Local-first — returns a decision only when confident, else
+ *                { confident: false, reason } so the step goes to Gemini.
+ * @returns {Promise<{observation, thought, status, action, local: true, confident, model, latencyMs} | {confident:false, reason}>}
+ */
+export async function localDecide({ task, elements, history, vault, imageBlob, mode = "backup" }) {
+  const t0 = performance.now();
+  const first = mode === "first";
+  const vaultTags = vault.map((v) => v.tag);
+  const ranked = rankCandidates({ task, elements, history, vaultTags });
+  const viable = ranked.filter((c) => c.score > 0);
+  const actedCount = actedTags(history).size;
+  const out = (d) => ({ ...d, local: true, model: LOCAL_MODEL.name, latencyMs: Math.round(performance.now() - t0) });
+  const notSure = (reason) => ({ confident: false, reason, latencyMs: Math.round(performance.now() - t0) });
+
+  // A required personal field the vault can't fill: that is a real question for the user.
+  const missing = missingRequiredVault({ task, elements, history, vaultTags, ranked });
+  if (missing) {
+    const what = KEY_WORDS[missing.key] || missing.key.toLowerCase().replace(/_/g, " ");
+    return out({
+      confident: true,
+      observation: `"${missing.e.label}" is required, and the private vault has no ${what}.`,
+      thought: "Only the user can supply this; it will be saved to the vault and filled as a tag.",
+      status: `Need your ${what}`,
+      action: { type: "ask_user", vault_key: missing.key, final_answer: `"${missing.e.label}" is required, but your private vault has no ${what}. What should I enter? It will be saved to your vault.` },
+    });
+  }
+
+  if (!viable.length) {
+    if (first) return notSure("nothing on this page clearly matches the task — Gemini decides whether the task is done");
+    return out({
+      confident: true,
+      observation: "No remaining element matches the task.",
+      thought: "On-device backup planner found nothing relevant left to do.",
+      status: "Finished (on-device backup)",
+      action: {
+        type: "done",
+        final_answer: actedCount ? `Completed ${actedCount} action(s) with the on-device backup model. Please review the page.` : "The on-device backup model could not find a relevant action for this task on this page.",
+      },
+    });
+  }
+
+  let shortlist = viable.slice(0, 5);
+  let top = shortlist[0];
+  let tied = [top];
+  if (first) {
+    // Confident = a clear winner whose value needn't be invented — or several
+    // equally strong fills that are all fully determined (vault fields, a
+    // stated message, a matching option): their order doesn't matter, so take
+    // the first one on the page.
+    const linkOk = top.e.kind !== "LINK" || top.score >= 5;
+    if (top.score < 2.9 || !linkOk) return notSure(`no strong candidate (top "${top.e.label}" ${top.score.toFixed(1)})`);
+    tied = viable.filter((c) => c.score >= 2.9 && top.score - c.score < 1.5);
+    if (tied.length > 1) {
+      if (!tied.every((c) => determinedFill(c, task))) return notSure(`no clear winner between ${tied.map((c) => `"${c.e.label}"`).join(" and ")}`);
+      tied.sort((a, b) => elements.indexOf(a.e) - elements.indexOf(b.e));
+      top = tied[0];
+      shortlist = [...tied, ...shortlist.filter((c) => !tied.includes(c))].slice(0, 5);
+    }
+  }
+
+  // Local-first: a fully determined fill (vault field, stated message, matching
+  // option) needs no vision vote — the value and target are already certain.
+  if (first && tied.every((c) => determinedFill(c, task))) {
+    const action = await buildAction(top, task, imageBlob, false);
+    if (action) {
+      return out({
+        confident: true,
+        observation: `"${top.e.label}" can be filled from what is already known — no need to ask the cloud.`,
+        thought: `Determined fill · candidates: ${shortlist.map((c) => `${c.e.tag} "${c.e.label}" (${c.score.toFixed(1)})`).join(", ")}`,
+        status: `On-device: ${action.type} ${top.e.label}`,
+        action,
+      });
+    }
+  }
+
+  // FastVLM chooses among the top candidates while looking at the sanitized frame.
+  const canFinish = !first && actedCount > 0 && !viable.some((c) => c.score >= 3);
+  const q = `You are helping a user on a web page. Goal: ${task}
+Already done: ${history.length ? history.slice(-6).map((h) => h.text.replace(/^Step \d+: /, "")).join("; ") : "nothing yet"}.
+Which ONE action should happen next?
+${shortlist.map((c, i) => `${i + 1}. ${describe(c.e)}`).join("\n")}${canFinish ? `\n${shortlist.length + 1}. The goal is complete` : ""}
+Answer with the number only.`;
+  let choice = top;
+  let vlmNote = "heuristic top choice";
+  try {
+    const r = await askLocal(imageBlob, q, 4);
+    const n = parseInt((r.text.match(/\d+/) || [])[0], 10);
+    if (n >= 1 && n <= shortlist.length) {
+      choice = shortlist[n - 1];
+      vlmNote = `FastVLM picked option ${n} of ${shortlist.length + (canFinish ? 1 : 0)}`;
+    } else if (n === shortlist.length + 1 && canFinish) {
+      return out({
+        confident: true,
+        observation: "FastVLM judged the goal complete.",
+        thought: "On-device backup planner found nothing relevant left to do.",
+        status: "Finished (on-device backup)",
+        action: { type: "done", final_answer: `Completed ${actedCount} action(s) with the on-device backup model.` },
+      });
+    }
+  } catch (e) {
+    if (first) return notSure(`on-device model unavailable (${e.message})`);
+    vlmNote = `model unavailable (${e.message}) — used heuristic ranking`;
+  }
+  // Local-first needs the ranking and the vision model to agree.
+  if (first && !tied.includes(choice)) return notSure(`FastVLM preferred "${choice.e.label}" over "${top.e.label}"`);
+
+  const action = await buildAction(choice, task, imageBlob, !first);
+  if (!action) return notSure(`"${choice.e.label}" needs text the task doesn't state — Gemini writes it`);
+
+  return out({
+    confident: true,
     observation: `On-device ${LOCAL_MODEL.name} looked at the sanitized frame (${vlmNote}).`,
     thought: `Candidates: ${shortlist.map((c) => `${c.e.tag} "${c.e.label}" (${c.score.toFixed(1)})`).join(", ")}`,
-    status: `On-device backup: ${action.type} ${e.label}`,
+    status: `${first ? "On-device" : "On-device backup"}: ${action.type} ${choice.e.label}`,
     action,
-    local: true,
-    model: LOCAL_MODEL.name,
-    latencyMs: Math.round(performance.now() - t0),
-  };
+  });
 }

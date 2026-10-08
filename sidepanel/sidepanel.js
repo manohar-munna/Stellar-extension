@@ -261,6 +261,13 @@ const RENDER = {
   },
 
   send(d) {
+    if (d.keptLocal) {
+      return card(
+        { title: "Kept on device", badge: "local", badgeText: "on-device" },
+        h("div", { class: "leak ok" }, "✓ Local-first: the on-device model is confident about this step — nothing is sent to Gemini"),
+        h("details", {}, h("summary", {}, "Prompt Gemini would have received"), h("pre", {}, d.prompt))
+      );
+    }
     if (d.localOnly) {
       return card(
         { title: "Kept on device", badge: "local", badgeText: "on-device", meta: `${Math.round(d.bytes / 1024)} KB` },
@@ -297,13 +304,14 @@ const RENDER = {
     const local = !!d.local;
     return card(
       {
-        title: local ? (d.localOnly ? "Reason (on-device)" : "Reason (on-device backup)") : "Reason",
+        title: local ? (d.localFirst ? "Reason (on-device, confident)" : d.localOnly ? "Reason (on-device)" : "Reason (on-device backup)") : "Reason",
         badge: local ? "local" : "cloud",
         badgeText: local ? "on-device" : "cloud",
         meta: `${d.latencyMs} ms`,
         cloud: !local,
       },
       d.fallback ? h("div", { class: "note warn" }, `Gemini failed (${d.fallback.slice(0, 160)}) — ${LOCAL_MODEL.name} decided this step on your device.`) : null,
+      d.whyCloud ? h("div", { class: "note" }, `On-device model wasn't sure: ${d.whyCloud} → asked Gemini.`) : null,
       h("div", { class: "thought" }, h("b", {}, "Sees: "), d.decision?.observation || "—"),
       h("div", { class: "thought" }, h("b", {}, local ? "Considered: " : "Plans: "), d.decision?.thought || "—"),
       h("div", {}, h("span", { class: "action-pill" }, "⇢ ", describeAction(a))),
@@ -318,7 +326,7 @@ const RENDER = {
   },
 
   validate(d) {
-    const icon = { pass: "✓", warn: "!", confirm: "?", block: "✗" };
+    const icon = { pass: "✓", warn: "!", confirm: "?", block: "✗", auto: "✓" };
     return card(
       { title: "Validate (local gate)", badge: "local", badgeText: "on-device" },
       h("div", {}, h("span", { class: `verdict ${d.verdict}` }, d.pending ? "needs approval" : d.verdict), " ", h("span", { class: "action-pill" }, d.summary)),
@@ -404,7 +412,7 @@ function makeRun({ task, snapshot, settings, maxSteps }) {
     h(
       "div",
       { class: "run-h" },
-      h("div", { class: "lbl" }, snapshot ? "Snapshot" : `Task ${id}`),
+      h("div", { class: "lbl" }, snapshot ? "Snapshot" : `Task ${id} · ${settings.runMode === "autopilot" ? "Autopilot" : "Safe mode"} · ${{ localfirst: "Local-first", auto: "Gemini-first", always: "On-device only", off: "Gemini only" }[settings.localBackup] || ""}`),
       h("div", { class: "task" }, snapshot ? task || "Capture → Detect → Redact preview" : task),
       (run.statsEl = h("div", { class: "run-stats" }))
     ),
@@ -684,7 +692,9 @@ const ui = {
       if (uniq.length) setBrief(S, "hidden", "local", "Hidden", `${uniq.length} private item${uniq.length === 1 ? "" : "s"}`, h("span", { class: "chips" }, tagChips(data.regions)));
       else setBrief(S, "hidden", "local", "Hidden", h("span", { class: "dim" }, `nothing private on screen (${how})`));
     }
-    if (stage === "send" && data.localOnly) {
+    if (stage === "send" && data.keptLocal) {
+      setBrief(S, "sent", "local", "Sent", h("span", { class: "dim" }, "nothing — the on-device model was confident"));
+    } else if (stage === "send" && data.localOnly) {
       setBrief(S, "sent", "local", "Sent", h("span", { class: "dim" }, "nothing — on-device mode, the frame stays in this browser"));
     } else if (stage === "send") {
       if (data.snapshot) {
@@ -698,7 +708,8 @@ const ui = {
       }
     }
     if (stage === "reason" && data.local) {
-      if (!data.localOnly) setBrief(S, "sent", "local", "Sent", h("span", { class: "dim" }, `Gemini failed → decided on-device by ${data.model}`));
+      if (data.localFirst) setBrief(S, "sent", "local", "Sent", h("span", { class: "dim" }, `nothing — decided on-device by ${data.model}`));
+      else if (!data.localOnly) setBrief(S, "sent", "local", "Sent", h("span", { class: "dim" }, `Gemini failed → decided on-device by ${data.model}`));
       if (data.decision?.observation) setBrief(S, "saw", "muted", "Saw", data.decision.observation);
     } else if (stage === "reason") {
       setBrief(S, "sent", "cloud", "Sent", `to ${data.model}: ${S.sendInfo || ""}`, h("span", { class: `pill ${S.leakOk === false ? "bad" : "ok"}` }, S.leakOk === false ? "✗ blocked" : "✓ 0 leaks"));
@@ -819,6 +830,46 @@ const ui = {
     append(S.body, node);
     this.status(`Waiting for you to complete the ${kind}…`);
     return { done, resolve: finish };
+  },
+
+  /** A required detail the vault doesn't have: ask, optionally save it. Resolves { value, save } or null. */
+  askVault(S, question, key) {
+    const run = activeRun;
+    setRunStatus(run, "waiting");
+    return new Promise((resolve) => {
+      const input = h("input", { class: "input", type: /PASS|PIN|OTP|CVV/.test(key) ? "password" : "text", placeholder: key.replace(/_/g, " ").toLowerCase(), spellcheck: "false" });
+      const saveBox = h("input", { type: "checkbox", checked: true });
+      const box = card(
+        { title: "A detail is needed", badge: "local", badgeText: "you" },
+        h("div", { class: "ask-box" }, h("div", {}, question), input, h("label", { class: "ask-save" }, saveBox, h("span", {}, `Save to my private vault as ${key}`))),
+        h("div", { class: "note" }, `Stays on this device — the AI only ever sees [VAULT_${key}].`),
+        h(
+          "div",
+          { class: "row" },
+          h("button", { class: "btn primary", onclick: () => input.value.trim() && done({ value: input.value.trim(), save: saveBox.checked }) }, "Use this"),
+          h("button", { class: "btn danger", onclick: () => done(null) }, "Stop")
+        )
+      );
+      box.classList.add("zone-local");
+      const done = (v) => {
+        box.querySelector(".row")?.remove();
+        input.disabled = true;
+        input.value = v ? "•".repeat(Math.min(12, v.value.length)) : input.value;
+        saveBox.disabled = true;
+        pending = pending.filter((p) => p !== cancel);
+        if (run.status === "waiting") setRunStatus(run, "running");
+        if (v) S.action = `you supplied [VAULT_${key}]${v.save ? " (saved to vault)" : ""}`;
+        resolve(v);
+      };
+      input.addEventListener("keydown", (e) => e.key === "Enter" && input.value.trim() && done({ value: input.value.trim(), save: saveBox.checked }));
+      const cancel = () => done(null);
+      pending.push(cancel);
+      if (selectedRun !== run) selectRun(run);
+      S.el.classList.remove("collapsed");
+      append(S.body, box);
+      input.focus();
+      this.status(`Waiting for your ${key.toLowerCase().replace(/_/g, " ")}…`);
+    });
   },
 
   cancelPending() {
@@ -954,12 +1005,11 @@ async function openSettings() {
   $("#detectModel").value = s.detectModel;
   document.querySelector(`input[name=detector][value=${s.detector === "vision" ? "vision" : "local"}]`).checked = true;
   document.querySelector(`input[name=pace][value=${s.pace || "guided"}]`).checked = true;
-  document.querySelector(`input[name=localBackup][value=${s.localBackup || "auto"}]`).checked = true;
+  document.querySelector(`input[name=localBackup][value=${s.localBackup || "localfirst"}]`).checked = true;
   $("#localPreload").checked = s.localPreload !== false;
   (document.querySelector(`input[name=localUnload][value="${s.localUnloadMinutes ?? 10}"]`) || document.querySelector("input[name=localUnload][value='10']")).checked = true;
   $("#vaultGemini").checked = s.vaultExtract === "gemini";
   $("#vaultReview").replaceChildren();
-  $("#askRisky").checked = s.askRisky;
   $("#maxSteps").value = s.maxSteps;
   $("#vault").value = s.vault;
   $("#saveStatus").textContent = "";
@@ -1004,11 +1054,10 @@ $("#saveSettings").addEventListener("click", async () => {
     detectModel: $("#detectModel").value.trim() || DEFAULTS.detectModel,
     detector: document.querySelector("input[name=detector]:checked")?.value || "local",
     pace: document.querySelector("input[name=pace]:checked")?.value || "guided",
-    localBackup: document.querySelector("input[name=localBackup]:checked")?.value || "auto",
+    localBackup: document.querySelector("input[name=localBackup]:checked")?.value || "localfirst",
     localPreload: $("#localPreload").checked,
     localUnloadMinutes: Number(document.querySelector("input[name=localUnload]:checked")?.value ?? 10),
     vaultExtract: $("#vaultGemini").checked ? "gemini" : "local",
-    askRisky: $("#askRisky").checked,
     maxSteps: Math.max(1, Math.min(50, parseInt($("#maxSteps").value, 10) || 15)),
     vault: $("#vault").value,
   });
@@ -1110,12 +1159,28 @@ function renderVaultReview(fields, notes) {
   );
 }
 
+// ------------------------------------------------------------- run mode switch
+
+function applyRunMode(mode) {
+  const m = mode === "autopilot" ? "autopilot" : "safe";
+  document.querySelector(`input[name=runMode][value=${m}]`).checked = true;
+  runBtn.title = m === "autopilot" ? "Run on Autopilot: no approval prompts" : "Run in Safe mode: asks before risky actions";
+}
+document.querySelectorAll("input[name=runMode]").forEach((r) =>
+  r.addEventListener("change", async () => {
+    applyRunMode(r.value);
+    await saveSettings({ runMode: r.value });
+    ui.status(r.value === "autopilot" ? "Autopilot: no approval prompts — it only stops for real questions (missing details, CAPTCHAs)." : "Safe mode: asks before risky actions, vault fills and pasting secrets.");
+  })
+);
+
 // ------------------------------------------------------------------- init
 
 (async () => {
   const s = await loadSettings();
   applyPresenter(s.presenter);
   applyTheme(s.theme || "system");
+  applyRunMode(s.runMode);
   configureAutoUnload(s.localUnloadMinutes ?? 10);
   // Warm the on-device model in the background once it has been downloaded.
   if (s.localBackup !== "off" && s.localPreload !== false && (await isLocalModelCached())) loadLocalModel().catch(() => {});

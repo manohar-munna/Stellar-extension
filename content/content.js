@@ -209,6 +209,7 @@
       };
       if (el instanceof HTMLInputElement) info.inputType = (el.type || "text").toLowerCase();
       if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) info.filled = el.value.length > 0;
+      if (el.required || el.getAttribute("aria-required") === "true" || /\*\s*$/.test(info.name)) info.required = true;
       if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) info.checked = el.checked;
       const expanded = el.getAttribute("aria-expanded");
       if (expanded) info.expanded = expanded === "true";

@@ -77,7 +77,8 @@ Choose exactly ONE next action:
 - go_back {}
 - wait {}  — the page is still loading
 - done {final_answer}  — task complete (or impossible); summarise the result for the user
-- ask_user {final_answer}  — you need a decision or information only the user can give; put the question in final_answer
+- ask_user {final_answer, vault_key}  — you need a decision or information only the user can give; put the question in final_answer.
+  If a REQUIRED field needs the user's personal information and no matching vault tag exists, ask for it and set vault_key to a short UPPERCASE name (e.g. PHONE, DOB, ADDRESS, COMPANY). The answer is stored in the private vault and you will then see it as [VAULT_<KEY>] — type that tag.
 
 Rules:
 - Only target tags that appear in the element list for THIS turn.
@@ -105,6 +106,7 @@ export const ACTION_SCHEMA = {
         clear: { type: "BOOLEAN" },
         submit: { type: "BOOLEAN" },
         final_answer: { type: "STRING" },
+        vault_key: { type: "STRING" },
       },
       required: ["type"],
     },
@@ -138,6 +140,7 @@ export function buildStepPrompt({ task, step, maxSteps, page, regions, vaultTags
     if (e.expanded !== undefined) state.push(e.expanded ? "expanded" : "collapsed");
     if (e.disabled) state.push("disabled");
     if (e.sensitive) state.push("sensitive-field");
+    if (e.required) state.push("required");
     if (e.options?.length) state.push(`options: ${e.options.slice(0, 8).map((o) => `"${o}"`).join(", ")}${e.options.length > 8 ? ", …" : ""}; selected: "${e.selected}"`);
     lines.push(`- ${e.tag} "${e.label}"${state.length ? ` (${state.join(", ")})` : ""}`);
   }

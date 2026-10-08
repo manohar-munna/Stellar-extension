@@ -52,6 +52,10 @@
     <section class="composer">
       <textarea id="task" rows="3" placeholder="Tell Stellar what to do on this tab…&#10;e.g. “Find the cheapest wireless earbuds and open the product page”"></textarea>
       <div class="row">
+        <div class="segmented modeswitch" role="radiogroup" aria-label="Run mode" title="Safe asks before risky actions · Autopilot runs to the end and only stops for real questions">
+          <label><input type="radio" name="runMode" value="safe" /><span>Safe</span></label>
+          <label><input type="radio" name="runMode" value="autopilot" /><span>Autopilot</span></label>
+        </div>
         <button id="runBtn" class="btn primary">Run agent</button>
         <button id="snapBtn" class="btn ghost" title="Capture → Detect → Redact and show the payload that would be sent. No reasoning call.">Snapshot</button>
         <button id="stopBtn" class="btn danger" hidden>Stop</button>
@@ -149,10 +153,7 @@
             </div>
             <p class="set-hint">As PS 26171 asks. Every hidden item keeps a semantic tag like [EMAIL_01].</p>
           </div>
-          <label class="switch-row">
-            <span><b>Ask before risky actions</b><small>Pay, delete, submit, filling vault data.</small></span>
-            <input id="askRisky" class="switch" type="checkbox" />
-          </label>
+          <p class="set-hint">Approvals: use the <b>Safe / Autopilot</b> switch next to Run agent.</p>
         </section>
 
         <!-- ---------------------------------------------------- On-device model -->
@@ -170,13 +171,15 @@
             <div class="progress"><i id="localBar"></i></div>
           </div>
           <div class="set-field">
-            <span class="set-label">Mode</span>
-            <div class="segmented three" role="radiogroup" aria-label="On-device mode">
-              <label><input type="radio" name="localBackup" value="auto" /><span>Backup</span></label>
-              <label><input type="radio" name="localBackup" value="always" /><span>On-device only</span></label>
-              <label><input type="radio" name="localBackup" value="off" /><span>Off</span></label>
+            <span class="set-label">Who decides each step</span>
+            <div class="segmented" role="radiogroup" aria-label="On-device mode">
+              <label><input type="radio" name="localBackup" value="localfirst" /><span>Local-first</span></label>
+              <label><input type="radio" name="localBackup" value="auto" /><span>Gemini-first</span></label>
+              <label><input type="radio" name="localBackup" value="always" /><span>On-device</span></label>
+              <label><input type="radio" name="localBackup" value="off" /><span>Gemini only</span></label>
             </div>
-            <p class="set-hint opt" data-name="localBackup" data-value="auto">Gemini runs the task; if it fails, the on-device model takes over so nothing breaks.</p>
+            <p class="set-hint opt" data-name="localBackup" data-value="localfirst">The on-device model acts when it is clearly sure (vault fields, search terms, matching options, finishing a form); Gemini is asked only otherwise — as PS 26171 describes.</p>
+            <p class="set-hint opt" data-name="localBackup" data-value="auto">Gemini decides every step; the on-device model takes over if Gemini fails, so nothing breaks.</p>
             <p class="set-hint opt" data-name="localBackup" data-value="always">Nothing is sent to the cloud. Works best for form-style tasks.</p>
             <p class="set-hint opt" data-name="localBackup" data-value="off">Gemini only. A Gemini failure stops the run.</p>
           </div>

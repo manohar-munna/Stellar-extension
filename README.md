@@ -120,11 +120,25 @@ and the panel labels the stage "local + cloud vision".
 **Settings → On-device model → Download & load** once: about 670 MB, cached by the browser, roughly a minute the
 first time on a fast connection. Do this before a demo.
 
+**Who decides each step** (Settings → On-device model):
+
 | Mode | What happens |
 | --- | --- |
-| **Backup** (default) | Gemini runs the task. If Gemini fails (bad key, quota, outage, timeout) the on-device model decides that step, and a failed vision detector falls back to on-device detection, so the demo keeps going. |
-| **On-device only** | Nothing is sent to the cloud at all; FastVLM plans every step. Best for form-style tasks. |
-| **Off** | Gemini only. |
+| **Local-first** (default) | The on-device model decides when it is clearly sure — a determined fill (vault field, a message the task states, a dropdown option that matches, a search term) or a click that the ranking and FastVLM agree on. Only otherwise is Gemini called, on sanitized data, as PS 26171 describes. On the demo billing task 5 of 6 steps stay on the device; Gemini only confirms the task is done (12 s instead of ~30 s). Each Gemini card says why the on-device model wasn't sure. |
+| **Gemini-first** | Gemini decides every step; the on-device model takes over if Gemini fails, so the demo keeps going. |
+| **On-device** | Nothing is sent to the cloud at all; FastVLM plans every step. Best for form-style tasks. |
+| **Gemini only** | No on-device decisions. |
+
+**Safe / Autopilot** (the switch next to *Run agent*):
+
+| Mode | What happens |
+| --- | --- |
+| **Safe** | Asks before risky clicks (pay, delete, submit, send), vault fills and pasting secrets. |
+| **Autopilot** | Runs to the end without approval prompts. It still stops for real questions — a required field your vault can't fill, or a CAPTCHA — and it still *blocks* (never auto-approves) pasting an on-page password/key into an ordinary field and putting secrets into URLs. |
+
+**Missing details:** if a required field (`required`, `aria-required` or a trailing `*`) needs personal data your vault
+doesn't have, Stellar asks you once. The answer is saved to the vault (on by default) and from then on the AI only
+sees it as a tag such as `[VAULT_PHONE]` — the value never appears in what is sent to Gemini.
 
 How the backup plans: a 0.5B model cannot plan a whole task alone, so the extension narrows each step to the five
 most relevant actions (skipping finished ones, filling a form before its submit button, matching dropdown options and

@@ -1482,6 +1482,7 @@ pre {
 
 .set-card:has(input[name="detector"][value="vision"]:checked) .opt[data-name="detector"][data-value="vision"],
 .set-card:has(input[name="detector"][value="local"]:checked) .opt[data-name="detector"][data-value="local"],
+.set-card:has(input[name="localBackup"][value="localfirst"]:checked) .opt[data-name="localBackup"][data-value="localfirst"],
 .set-card:has(input[name="localBackup"][value="auto"]:checked) .opt[data-name="localBackup"][data-value="auto"],
 .set-card:has(input[name="localBackup"][value="always"]:checked) .opt[data-name="localBackup"][data-value="always"],
 .set-card:has(input[name="localBackup"][value="off"]:checked) .opt[data-name="localBackup"][data-value="off"],
@@ -1770,4 +1771,35 @@ pre {
 
 .warn-hint {
   color: var(--warn-text);
+}
+
+/* Safe / Autopilot switch beside Run agent */
+.modeswitch {
+  flex: none;
+  width: 164px;
+  align-self: center;
+}
+
+.modeswitch span {
+  height: 34px;
+  font-size: 12px;
+}
+
+.modeswitch input[value="autopilot"]:checked + span {
+  color: #fff;
+  background: linear-gradient(135deg, #7c3aed, #d946ef);
+  box-shadow: none;
+}
+
+.checks .auto .i {
+  color: var(--cloud-text);
+}
+
+.ask-save {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
 }

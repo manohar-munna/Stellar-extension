@@ -17,9 +17,13 @@ export const DEFAULTS = {
   // "guided" pauses briefly after every stage so people can follow along;
   // "fast" runs at full speed.
   pace: "guided",
-  // On-device FastVLM: "auto" = backup when Gemini fails, "always" = local
-  // only (nothing sent to the cloud), "off" = never.
-  localBackup: "auto",
+  // On-device FastVLM: "localfirst" = decides when confident, Gemini otherwise;
+  // "auto" = Gemini decides, on-device takes over when Gemini fails;
+  // "always" = on-device only (nothing sent to the cloud); "off" = Gemini only.
+  localBackup: "localfirst",
+  // "safe" asks before risky actions; "autopilot" runs to the end and only
+  // stops for real questions (missing required details, CAPTCHAs).
+  runMode: "safe",
   localPreload: true,
   // Unload the on-device model after this many idle minutes (0 = never).
   localUnloadMinutes: 10,
@@ -29,7 +33,7 @@ export const DEFAULTS = {
 };
 
 export async function loadSettings() {
-  const stored = await chrome.storage.local.get([...Object.keys(DEFAULTS), "privacyV2"]);
+  const stored = await chrome.storage.local.get([...Object.keys(DEFAULTS), "privacyV2", "modesV3"]);
   // One-time move to the on-device detector: earlier builds defaulted to the
   // cloud detector, which sends the raw frame before redaction.
   if (!stored.privacyV2) {
@@ -37,7 +41,13 @@ export async function loadSettings() {
     await chrome.storage.local.set({ detector: "local", privacyV2: true });
   }
   if (stored.detector === "dom") stored.detector = "local";
+  // One-time move from the old "Gemini first" default to Local-first.
+  if (!stored.modesV3) {
+    if (!stored.localBackup || stored.localBackup === "auto") stored.localBackup = "localfirst";
+    await chrome.storage.local.set({ localBackup: stored.localBackup, modesV3: true });
+  }
   delete stored.privacyV2;
+  delete stored.modesV3;
   return { ...DEFAULTS, ...stored };
 }
 

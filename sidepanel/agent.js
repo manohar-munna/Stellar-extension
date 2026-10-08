@@ -2,13 +2,14 @@
 // Runs in the side panel; reports every stage to the UI so the flow is visible.
 
 import { generateJson } from "./gemini.js";
-import { loadSettings } from "./settings.js";
+import { loadSettings, saveSettings } from "./settings.js";
+import { mergeIntoVault } from "./vault-import.js";
 import { DETECT_PROMPT, DETECT_SCHEMA, AGENT_SYSTEM, ACTION_SCHEMA, buildStepPrompt } from "./prompts.js";
 import { buildRegions, parseVault, knownSecrets, scrubText, scrubUrl, leakCheck, coverage } from "./privacy.js";
 import { loadBitmap, renderDetection, renderSanitized, encodeJpeg } from "./redact.js";
 import { validateAction } from "./validate.js";
 import { localDecide } from "./local/planner.js";
-import { LOCAL_MODEL, holdLocalModel, loadLocalModel } from "./local/vlm.js";
+import { LOCAL_MODEL, holdLocalModel, loadLocalModel, isLocalModelCached, localState } from "./local/vlm.js";
 import { detectFaces } from "./local/faces.js";
 
 const NEW_TAB_URL = /^(chrome:\/\/(newtab|new-tab-page)|chrome-search:\/\/|about:blank|edge:\/\/newtab)/;
@@ -155,6 +156,11 @@ export class StellarAgent {
     const snapshot = mode === "snapshot";
     // "always": nothing goes to the cloud; the on-device model plans every step.
     const localOnly = settings.localBackup === "always";
+    // "localfirst": the on-device model decides when it is confident; Gemini only otherwise.
+    let localFirst = settings.localBackup === "localfirst" && !snapshot;
+    // Autopilot: no approval prompts; only real questions (and CAPTCHAs) stop the run.
+    settings.autopilot = settings.runMode === "autopilot";
+    settings.askRisky = !settings.autopilot;
 
     const vault = parseVault(settings.vault);
     const history = [];
@@ -168,6 +174,13 @@ export class StellarAgent {
     const holdModel = settings.localBackup !== "off" && !snapshot;
     if (holdModel) holdLocalModel(true);
     if (localOnly && !snapshot) loadLocalModel().catch(() => {}); // warm up while the first frame is captured
+    if (localFirst) {
+      if (localState.status === "ready" || (await isLocalModelCached())) loadLocalModel().catch(() => {});
+      else {
+        localFirst = false;
+        ui.note(`Local-first: the on-device model isn't downloaded yet, so Gemini decides every step. Download it in Settings → On-device model.`);
+      }
+    }
 
     try {
       if (!settings.apiKey && !localOnly && (!snapshot || settings.detector === "vision")) {
@@ -316,6 +329,21 @@ export class StellarAgent {
 
         // ------------------------------------------------------------- 4 SEND
         ui.setStage("send");
+        // Local-first: let the on-device model try before anything is sent.
+        let localPick = null;
+        let localWhy = "";
+        if (localFirst) {
+          ui.status(`On-device ${LOCAL_MODEL.name} is checking whether it can decide this step…`);
+          try {
+            await loadLocalModel();
+            const imageBlob = await (await fetch(sanitized.dataUrl)).blob();
+            const d = await localDecide({ task, elements, history, vault, imageBlob, mode: "first" });
+            if (d.confident) localPick = d;
+            else localWhy = d.reason;
+          } catch (err) {
+            localWhy = `on-device model unavailable (${err.message})`;
+          }
+        }
         const page = { title: scrubText(scan.title, secrets), url: scrubUrl(scan.url, secrets), viewport: scan.viewport };
         const prompt = buildStepPrompt({
           task: scrubText(task, secrets, { generic: false }),
@@ -351,8 +379,9 @@ export class StellarAgent {
           secretCount: secrets.length,
           snapshot,
           localOnly,
+          keptLocal: !!localPick,
         });
-        if (leaks.length) {
+        if (leaks.length && !localPick && !localOnly) {
           throw new Error(`Leak check failed: ${leaks.map((t) => `[${t}]`).join(", ")} found in outbound text. Nothing was sent.`);
         }
         if (snapshot) {
@@ -377,7 +406,10 @@ export class StellarAgent {
             throw new Error(`On-device model failed too: ${err.message}`);
           }
         };
-        if (localOnly) {
+        if (localPick) {
+          decision = localPick;
+          await ui.card(S, "reason", { model: decision.model, latencyMs: decision.latencyMs, decision, local: true, localFirst: true });
+        } else if (localOnly) {
           decision = await decideLocally();
           await ui.card(S, "reason", { model: decision.model, latencyMs: decision.latencyMs, decision, local: true, localOnly: true });
         } else {
@@ -394,7 +426,7 @@ export class StellarAgent {
               onRetry: (ms) => ui.status(`Gemini is busy — retrying in ${Math.round(ms / 1000)}s…`),
             });
             decision = res.json;
-            await ui.card(S, "reason", { model: res.model, latencyMs: res.latencyMs, usage: res.usage, decision, keyIndex: res.keyIndex, keyCount: res.keyCount });
+            await ui.card(S, "reason", { model: res.model, latencyMs: res.latencyMs, usage: res.usage, decision, keyIndex: res.keyIndex, keyCount: res.keyCount, whyCloud: localWhy });
           } catch (e) {
             if (this.stopped) throw new StopError();
             if (settings.localBackup === "off") throw new Error(`Reasoning call failed: ${e.message}`);
@@ -410,6 +442,27 @@ export class StellarAgent {
           ui.setStage(null);
           ui.finish({ ok: true, message: proposed.final_answer || decision.status || "Task complete." });
           return;
+        }
+        const vaultKey = String(proposed.vault_key || "").toUpperCase().replace(/^VAULT_/, "").replace(/[^A-Z0-9_]/g, "_").replace(/^_+|_+$/g, "");
+        if (proposed.type === "ask_user" && vaultKey) {
+          ui.setStage(null);
+          await this.cs(tabId, { op: "overlay", visible: true, message: "Stellar needs a detail from you" });
+          const answer = await ui.askVault(S, proposed.final_answer || `What is your ${vaultKey.toLowerCase()}?`, vaultKey);
+          if (answer == null) throw new StopError();
+          const tag = `VAULT_${vaultKey}`;
+          for (let i = vault.length - 1; i >= 0; i--) if (vault[i].tag === tag) vault.splice(i, 1);
+          vault.push({ tag, value: answer.value });
+          if (answer.save) {
+            const current = (await loadSettings()).vault;
+            await saveSettings({ vault: mergeIntoVault(current, [{ key: vaultKey, value: answer.value }]).text });
+          }
+          // The value itself never enters the history the cloud model sees.
+          history.push({
+            text: `Step ${step}: the user supplied [${tag}]${answer.save ? " (saved to the private vault)" : " (for this task only)"} — type [${tag}] where it is needed.`,
+            sig: "vaultask",
+            vaultKey,
+          });
+          continue;
         }
         if (proposed.type === "ask_user") {
           ui.setStage(null);
