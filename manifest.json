@@ -24,8 +24,16 @@
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["sidePanel", "tabs", "activeTab", "scripting", "storage"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "sidePanel",
+    "tabs",
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "commands": {
     "_execute_action": {
       "suggested_key": {
@@ -33,5 +41,8 @@
       },
       "description": "Open the Stellar side panel"
     }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
   }
 }

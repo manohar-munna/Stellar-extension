@@ -105,6 +105,32 @@ requires replacing the `detector === "vision"` block in `sidepanel/agent.js`.
 
 ---
 
+## On-device model (backup) and vault import
+
+**FastVLM-0.5B** (Apple, ONNX via Transformers.js) runs in a Web Worker on **WebGPU** (WASM fallback). Open
+**Settings → On-device model → Download & load** once: about 670 MB, cached by the browser, roughly a minute the
+first time on a fast connection. Do this before a demo.
+
+| Mode | What happens |
+| --- | --- |
+| **Backup** (default) | Gemini runs the task. If Gemini fails (bad key, quota, outage, timeout) the on-device model decides that step, and a failed vision detector falls back to on-device detection, so the demo keeps going. |
+| **On-device only** | Nothing is sent to the cloud at all; FastVLM plans every step. Best for form-style tasks. |
+| **Off** | Gemini only. |
+
+How the backup plans: a 0.5B model cannot plan a whole task alone, so the extension narrows each step to the five
+most relevant actions (skipping finished ones, filling a form before its submit button, matching dropdown options and
+vault fields to the task) and FastVLM chooses between them while looking at the **sanitized** frame. Free text comes
+from the task when it says what to write ("asking to downgrade my plan"), otherwise FastVLM drafts it.
+
+Model choice was benchmarked in Chromium on WebGPU: SmolVLM-256M and SmolVLM-500M could not pick actions or read an
+ID card; FastVLM-0.5B read a test ID card 6/6 in about 1.5 s. Weights use fp16 vision + 4-bit decoder + 8-bit
+embeddings: same accuracy as the model card's ~1.1 GB setup at ~670 MB.
+
+**Import vault data from files** (Settings → Private vault → *Import from file…*): ID-card photos and scanned PDFs are
+read by FastVLM on-device; text PDFs via pdf.js; `.docx`, `.vcf`, `.txt`, `.csv` and `.json` are parsed locally. You
+review and edit every field before it is saved. *Extract with Gemini instead* is an explicit opt-in (it uploads the
+file to Google).
+
 ## Project layout
 
 ```
@@ -120,8 +146,13 @@ sidepanel/
   redact.js              canvas rendering of detection / sanitized frames
   validate.js            local action-validation gate
   settings.js            chrome.storage.local settings
+  vault-import.js        vault extraction from images, PDFs, .docx, .vcf, text
+  local/vlm-worker.js    FastVLM in a Web Worker (WebGPU / WASM)
+  local/vlm.js           client: load with progress, generate
+  local/planner.js       on-device backup planner
 demo/index.html          fictional page with fake PII for demos
 icons/                   extension icons
+vendor/                  Transformers.js, ONNX Runtime Web, pdf.js (see vendor/README.md)
 ```
 
 ## Limitations

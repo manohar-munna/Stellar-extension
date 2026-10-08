@@ -212,6 +212,12 @@
       if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) info.checked = el.checked;
       const expanded = el.getAttribute("aria-expanded");
       if (expanded) info.expanded = expanded === "true";
+      const form = el.form || el.closest("form");
+      if (form) info.form = [...document.forms].indexOf(form);
+      if (el instanceof HTMLSelectElement) {
+        info.options = [...el.options].slice(0, 40).map((o) => o.text.trim()).filter(Boolean);
+        info.selected = el.options[el.selectedIndex]?.text.trim() || "";
+      }
       return info;
     });
   }

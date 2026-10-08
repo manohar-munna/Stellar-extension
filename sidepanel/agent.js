@@ -7,6 +7,8 @@ import { DETECT_PROMPT, DETECT_SCHEMA, AGENT_SYSTEM, ACTION_SCHEMA, buildStepPro
 import { buildRegions, parseVault, knownSecrets, scrubText, scrubUrl, leakCheck, coverage } from "./privacy.js";
 import { loadBitmap, renderDetection, renderSanitized, encodeJpeg } from "./redact.js";
 import { validateAction } from "./validate.js";
+import { localDecide } from "./local/planner.js";
+import { LOCAL_MODEL } from "./local/vlm.js";
 
 const NEW_TAB_URL = /^(chrome:\/\/(newtab|new-tab-page)|chrome-search:\/\/|about:blank|edge:\/\/newtab)/;
 
@@ -149,6 +151,8 @@ export class StellarAgent {
     this.abort = new AbortController();
     const { settings, ui } = this;
     const snapshot = mode === "snapshot";
+    // "always": nothing goes to the cloud; the on-device model plans every step.
+    const localOnly = settings.localBackup === "always";
 
     const vault = parseVault(settings.vault);
     const history = [];
@@ -159,7 +163,7 @@ export class StellarAgent {
     ui.runStarted({ task, snapshot, settings, maxSteps });
 
     try {
-      if (!settings.apiKey && (!snapshot || settings.detector === "vision")) {
+      if (!settings.apiKey && !localOnly && (!snapshot || settings.detector === "vision")) {
         throw new Error("Add your Gemini API key in Settings first.");
       }
 
@@ -229,7 +233,7 @@ export class StellarAgent {
         const t1 = performance.now();
         let vision = [];
         let visionMeta = null;
-        if (settings.detector === "vision") {
+        if (settings.detector === "vision" && !localOnly) {
           const forDetect = encodeJpeg(rawCanvas, 1280, 0.85);
           try {
             const res = await generateJson({
@@ -246,9 +250,12 @@ export class StellarAgent {
             visionMeta = { model: res.model, latencyMs: res.latencyMs, usage: res.usage, bytes: forDetect.bytes, keyIndex: res.keyIndex, keyCount: res.keyCount };
           } catch (e) {
             if (this.stopped) throw new StopError();
-            throw new Error(
-              `Vision detector failed (${e.message}). Stopping rather than sending a frame that was not fully checked. Retry, or switch the detector to "DOM only" in Settings.`
-            );
+            if (settings.localBackup === "off") {
+              throw new Error(
+                `Vision detector failed (${e.message}). Stopping rather than sending a frame that was not fully checked. Retry, or switch the detector to "DOM only" in Settings.`
+              );
+            }
+            ui.note(`Vision detector unavailable (${e.message.slice(0, 120)}) — this frame is redacted with on-device detection only.`);
           }
         }
         const regions = buildRegions({ domPii: scan.pii, vision, viewport: scan.viewport });
@@ -256,7 +263,7 @@ export class StellarAgent {
         const detectCanvas = renderDetection(bitmap, scan.viewport, regions);
         await ui.card(S, "detect", {
           ms: Math.round(performance.now() - t1),
-          mode: settings.detector,
+          mode: localOnly ? "dom" : settings.detector,
           domCount: scan.pii.length,
           visionCount: vision.length,
           visionMeta,
@@ -271,7 +278,8 @@ export class StellarAgent {
         const elements = scan.elements.map((e) => {
           const cover = regions.find((r) => coverage(e.rect, r.rect) > 0.5);
           const label = cover && e.kind !== "INPUT" ? `[${cover.tag}]` : scrubText(e.name, secrets);
-          return { ...e, label };
+          const options = e.options?.map((o) => scrubText(o, secrets));
+          return { ...e, label, ...(options ? { options, selected: scrubText(e.selected, secrets) } : {}) };
         });
         const sanitizedCanvas = renderSanitized(bitmap, scan.viewport, regions, elements, { style: settings.redactStyle });
         const sanitized = encodeJpeg(sanitizedCanvas, 1280, 0.85);
@@ -321,6 +329,7 @@ export class StellarAgent {
           leaks,
           secretCount: secrets.length,
           snapshot,
+          localOnly,
         });
         if (leaks.length) {
           throw new Error(`Leak check failed: ${leaks.map((t) => `[${t}]`).join(", ")} found in outbound text. Nothing was sent.`);
@@ -337,23 +346,40 @@ export class StellarAgent {
         ui.setStage("reason");
         await this.cs(tabId, { op: "overlay", visible: true, message: "Stellar is thinking…" });
         let decision;
-        try {
-          const res = await generateJson({
-            apiKey: settings.apiKey,
-            model: settings.reasonModel,
-            system: AGENT_SYSTEM,
-            prompt,
-            image: { mimeType: "image/jpeg", base64: sanitized.base64 },
-            schema: ACTION_SCHEMA,
-            temperature: 0.2,
-            signal: this.abort.signal,
-            onRetry: (ms) => ui.status(`Gemini is busy — retrying in ${Math.round(ms / 1000)}s…`),
-          });
-          decision = res.json;
-          await ui.card(S, "reason", { model: res.model, latencyMs: res.latencyMs, usage: res.usage, decision, keyIndex: res.keyIndex, keyCount: res.keyCount });
-        } catch (e) {
-          if (this.stopped) throw new StopError();
-          throw new Error(`Reasoning call failed: ${e.message}`);
+        const decideLocally = async (why) => {
+          if (why) ui.note(why);
+          ui.status(`On-device ${LOCAL_MODEL.name} is choosing the next action…`);
+          const imageBlob = await (await fetch(sanitized.dataUrl)).blob();
+          try {
+            return await localDecide({ task, elements, history, vault, imageBlob });
+          } catch (err) {
+            throw new Error(`On-device model failed too: ${err.message}`);
+          }
+        };
+        if (localOnly) {
+          decision = await decideLocally();
+          await ui.card(S, "reason", { model: decision.model, latencyMs: decision.latencyMs, decision, local: true, localOnly: true });
+        } else {
+          try {
+            const res = await generateJson({
+              apiKey: settings.apiKey,
+              model: settings.reasonModel,
+              system: AGENT_SYSTEM,
+              prompt,
+              image: { mimeType: "image/jpeg", base64: sanitized.base64 },
+              schema: ACTION_SCHEMA,
+              temperature: 0.2,
+              signal: this.abort.signal,
+              onRetry: (ms) => ui.status(`Gemini is busy — retrying in ${Math.round(ms / 1000)}s…`),
+            });
+            decision = res.json;
+            await ui.card(S, "reason", { model: res.model, latencyMs: res.latencyMs, usage: res.usage, decision, keyIndex: res.keyIndex, keyCount: res.keyCount });
+          } catch (e) {
+            if (this.stopped) throw new StopError();
+            if (settings.localBackup === "off") throw new Error(`Reasoning call failed: ${e.message}`);
+            decision = await decideLocally(`Gemini unavailable (${e.message.slice(0, 140)}) — the on-device ${LOCAL_MODEL.name} takes over this step.`);
+            await ui.card(S, "reason", { model: decision.model, latencyMs: decision.latencyMs, decision, local: true, fallback: e.message });
+          }
         }
         const proposed = decision?.action || {};
         if (decision?.status) ui.status(decision.status);

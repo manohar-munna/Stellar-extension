@@ -89,6 +89,8 @@
       <button id="exportBtn" class="link">Export run</button>
       <span class="sep">·</span>
       <button id="clearBtn" class="link">Clear</button>
+      <span class="sep">·</span>
+      <button id="localChip" class="link local-chip" title="On-device model status — click to open settings">on-device: off</button>
     </footer>
 
     <div id="settings" class="drawer" hidden>
@@ -136,6 +138,22 @@
         </fieldset>
 
         <fieldset class="field">
+          <legend>On-device model</legend>
+          <div class="local-card">
+            <div class="local-head"><b>FastVLM-0.5B</b><span class="muted sm">ONNX · WebGPU · ~670 MB, downloaded once and cached</span></div>
+            <div class="local-status" id="localStatus">Not loaded</div>
+            <div class="progress"><i id="localBar"></i></div>
+            <button id="localLoad" class="btn ghost sm" type="button">Download &amp; load</button>
+          </div>
+          <label class="radio"><input type="radio" name="localBackup" value="auto" />
+            <span><b>Backup</b><small>Gemini runs the task; if it fails, the on-device model takes over so nothing breaks.</small></span></label>
+          <label class="radio"><input type="radio" name="localBackup" value="always" />
+            <span><b>On-device only</b><small>Nothing is sent to the cloud. Works best for form-style tasks.</small></span></label>
+          <label class="radio"><input type="radio" name="localBackup" value="off" /><span><b>Off</b></span></label>
+          <label class="check"><input id="localPreload" type="checkbox" /> <span>Load it in the background when the panel opens (after the first download)</span></label>
+        </fieldset>
+
+        <fieldset class="field">
           <legend>Pace</legend>
           <label class="radio row"><input type="radio" name="pace" value="guided" /><span>Guided — pause on each stage</span></label>
           <label class="radio row"><input type="radio" name="pace" value="fast" /><span>Fast</span></label>
@@ -153,6 +171,15 @@
           <textarea id="vault" rows="5" spellcheck="false" placeholder="EMAIL=you@example.com&#10;PHONE=+91 98765 43210&#10;NAME=Your Name"></textarea>
           <small>One <code>KEY=value</code> per line. The AI only sees <code>[VAULT_EMAIL]</code>-style tags; values are filled in locally after validation.</small>
         </label>
+        <div class="vault-import">
+          <div class="inline">
+            <button id="vaultImportBtn" class="btn ghost sm" type="button">Import from file…</button>
+            <span class="muted sm">ID card photo, PDF, résumé (.docx), contact card (.vcf), .txt/.csv/.json</span>
+          </div>
+          <input id="vaultFile" type="file" multiple accept="image/*,.pdf,.docx,.txt,.csv,.json,.vcf" hidden />
+          <label class="check sm"><input id="vaultGemini" type="checkbox" /> <span>Extract with Gemini instead (uploads the file to Google)</span></label>
+          <div id="vaultReview"></div>
+        </div>
 
         <div class="drawer-actions">
           <button id="saveSettings" class="btn primary">Save</button>

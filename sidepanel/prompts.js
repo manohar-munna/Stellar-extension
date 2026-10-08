@@ -138,6 +138,7 @@ export function buildStepPrompt({ task, step, maxSteps, page, regions, vaultTags
     if (e.expanded !== undefined) state.push(e.expanded ? "expanded" : "collapsed");
     if (e.disabled) state.push("disabled");
     if (e.sensitive) state.push("sensitive-field");
+    if (e.options?.length) state.push(`options: ${e.options.slice(0, 8).map((o) => `"${o}"`).join(", ")}${e.options.length > 8 ? ", …" : ""}; selected: "${e.selected}"`);
     lines.push(`- ${e.tag} "${e.label}"${state.length ? ` (${state.join(", ")})` : ""}`);
   }
   lines.push("");

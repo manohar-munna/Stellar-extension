@@ -5,6 +5,8 @@ import { StellarAgent, describeAction } from "./agent.js";
 import { loadSettings, saveSettings, DEFAULTS } from "./settings.js";
 import { listModels } from "./gemini.js";
 import { CATEGORY_COLORS } from "./privacy.js";
+import { loadLocalModel, onLocalState, isLocalModelCached, localState, LOCAL_MODEL } from "./local/vlm.js";
+import { extractFromFile, mergeIntoVault, VAULT_FIELDS } from "./vault-import.js";
 
 const $ = (sel) => document.querySelector(sel);
 const STAGES = ["capture", "detect", "redact", "send", "reason", "validate", "execute"];
@@ -257,6 +259,13 @@ const RENDER = {
   },
 
   send(d) {
+    if (d.localOnly) {
+      return card(
+        { title: "Kept on device", badge: "local", badgeText: "on-device", meta: `${Math.round(d.bytes / 1024)} KB` },
+        h("div", { class: "leak ok" }, "✓ On-device mode — the sanitized frame and prompt stay in this browser"),
+        h("details", {}, h("summary", {}, "Prompt the cloud model would have received"), h("pre", {}, d.prompt))
+      );
+    }
     const leak = d.leaks.length
       ? h("div", { class: "leak bad" }, `✗ Leak check failed: ${d.leaks.map((t) => `[${t}]`).join(", ")} in outbound text — request blocked`)
       : h("div", { class: "leak ok" }, `✓ Leak check passed — 0 of ${d.secretCount} locally-known private values in the outbound text`);
@@ -283,13 +292,25 @@ const RENDER = {
 
   reason(d) {
     const a = d.decision?.action || {};
+    const local = !!d.local;
     return card(
-      { title: "Reason", badge: "cloud", badgeText: "cloud", meta: `${d.latencyMs} ms`, cloud: true },
+      {
+        title: local ? (d.localOnly ? "Reason (on-device)" : "Reason (on-device backup)") : "Reason",
+        badge: local ? "local" : "cloud",
+        badgeText: local ? "on-device" : "cloud",
+        meta: `${d.latencyMs} ms`,
+        cloud: !local,
+      },
+      d.fallback ? h("div", { class: "note warn" }, `Gemini failed (${d.fallback.slice(0, 160)}) — ${LOCAL_MODEL.name} decided this step on your device.`) : null,
       h("div", { class: "thought" }, h("b", {}, "Sees: "), d.decision?.observation || "—"),
-      h("div", { class: "thought" }, h("b", {}, "Plans: "), d.decision?.thought || "—"),
+      h("div", { class: "thought" }, h("b", {}, local ? "Considered: " : "Plans: "), d.decision?.thought || "—"),
       h("div", {}, h("span", { class: "action-pill" }, "⇢ ", describeAction(a))),
       a.final_answer && a.type !== "done" && a.type !== "ask_user" ? h("div", { class: "note" }, a.final_answer) : null,
-      h("div", { class: "note" }, `${d.model} · ${usageText(d.usage)}${d.keyCount > 1 ? ` · key ${d.keyIndex}/${d.keyCount}` : ""}`),
+      h(
+        "div",
+        { class: "note" },
+        local ? `${d.model} · on-device (${localState.device || "?"}) · nothing sent` : `${d.model} · ${usageText(d.usage)}${d.keyCount > 1 ? ` · key ${d.keyIndex}/${d.keyCount}` : ""}`
+      ),
       h("details", {}, h("summary", {}, "Model response (JSON)"), h("pre", {}, JSON.stringify(d.decision, null, 2)))
     );
   },
@@ -472,7 +493,7 @@ function updateRunStats(run) {
 }
 
 function makeStep(run, n) {
-  const step = { n, t0: performance.now(), stages: new Map(), action: "", result: null, rows: {} };
+  const step = { n, t0: performance.now(), stages: new Map(), action: "", result: null, rows: {}, zones: {} };
   step.sum = h("span", { class: "sum" }, h("span", { class: "spinner sm" }), "Working…");
   step.time = h("span", { class: "time" });
   step.bar = h("div", { class: "stagebar" });
@@ -503,7 +524,7 @@ function renderStageBar(run, step) {
   const live = step.el.classList.contains("live") && run.stage;
   step.bar.replaceChildren(
     ...STAGES.map((s) => {
-      const z = zoneOf(run, s);
+      const z = step.zones[s] ? { zone: step.zones[s], zn: "device" } : zoneOf(run, s);
       const state = step.stages.get(s) || (live && run.stage === s ? "active" : "");
       return h("button", {
         class: `seg zone-${z.zone} ${state}`,
@@ -621,7 +642,8 @@ const ui = {
   card(S, stage, data) {
     const run = activeRun;
     const node = RENDER[stage](data);
-    node.classList.add(`zone-${zoneOf(run, stage).zone}`);
+    if (data.local || data.localOnly) S.zones[stage] = "local";
+    node.classList.add(`zone-${S.zones[stage] || zoneOf(run, stage).zone}`);
     node.dataset.stage = stage;
     node.querySelector(".card-h").prepend(h("span", { class: "num" }, STAGES.indexOf(stage) + 1));
     S.lastCard = node;
@@ -659,7 +681,9 @@ const ui = {
       if (uniq.length) setBrief(S, "hidden", "local", "Hidden", `${uniq.length} private item${uniq.length === 1 ? "" : "s"}`, h("span", { class: "chips" }, tagChips(data.regions)));
       else setBrief(S, "hidden", "local", "Hidden", h("span", { class: "dim" }, `nothing private on screen (${how})`));
     }
-    if (stage === "send") {
+    if (stage === "send" && data.localOnly) {
+      setBrief(S, "sent", "local", "Sent", h("span", { class: "dim" }, "nothing — on-device mode, the frame stays in this browser"));
+    } else if (stage === "send") {
       if (data.snapshot) {
         setBrief(S, "sent", "local", "Sent", h("span", { class: "dim" }, "nothing — snapshot preview stays on this device"));
       } else {
@@ -670,7 +694,10 @@ const ui = {
         setBrief(S, "sent", "cloud", "Sent", S.sendInfo, h("span", { class: `pill ${S.leakOk ? "ok" : "bad"}` }, S.leakOk ? "✓ 0 leaks" : "✗ blocked"));
       }
     }
-    if (stage === "reason") {
+    if (stage === "reason" && data.local) {
+      if (!data.localOnly) setBrief(S, "sent", "local", "Sent", h("span", { class: "dim" }, `Gemini failed → decided on-device by ${data.model}`));
+      if (data.decision?.observation) setBrief(S, "saw", "muted", "Saw", data.decision.observation);
+    } else if (stage === "reason") {
       setBrief(S, "sent", "cloud", "Sent", `to ${data.model}: ${S.sendInfo || ""}`, h("span", { class: `pill ${S.leakOk === false ? "bad" : "ok"}` }, S.leakOk === false ? "✗ blocked" : "✓ 0 leaks"));
       if (data.decision?.observation) setBrief(S, "saw", "muted", "Saw", data.decision.observation);
     }
@@ -924,6 +951,10 @@ async function openSettings() {
   document.querySelector(`input[name=detector][value=${s.detector}]`).checked = true;
   document.querySelector(`input[name=redactStyle][value=${s.redactStyle}]`).checked = true;
   document.querySelector(`input[name=pace][value=${s.pace || "guided"}]`).checked = true;
+  document.querySelector(`input[name=localBackup][value=${s.localBackup || "auto"}]`).checked = true;
+  $("#localPreload").checked = s.localPreload !== false;
+  $("#vaultGemini").checked = s.vaultExtract === "gemini";
+  $("#vaultReview").replaceChildren();
   $("#askRisky").checked = s.askRisky;
   $("#maxSteps").value = s.maxSteps;
   $("#vault").value = s.vault;
@@ -970,6 +1001,9 @@ $("#saveSettings").addEventListener("click", async () => {
     detector: document.querySelector("input[name=detector]:checked")?.value || "vision",
     redactStyle: document.querySelector("input[name=redactStyle]:checked")?.value || "solid",
     pace: document.querySelector("input[name=pace]:checked")?.value || "guided",
+    localBackup: document.querySelector("input[name=localBackup]:checked")?.value || "auto",
+    localPreload: $("#localPreload").checked,
+    vaultExtract: $("#vaultGemini").checked ? "gemini" : "local",
     askRisky: $("#askRisky").checked,
     maxSteps: Math.max(1, Math.min(50, parseInt($("#maxSteps").value, 10) || 15)),
     vault: $("#vault").value,
@@ -978,12 +1012,96 @@ $("#saveSettings").addEventListener("click", async () => {
   setTimeout(() => (drawer.hidden = true), 500);
 });
 
+// ------------------------------------------------------------ on-device model
+
+const localChip = $("#localChip");
+onLocalState((st) => {
+  const pct = Math.round((st.progress || 0) * 100);
+  const text =
+    st.status === "ready"
+      ? `Ready on ${st.device === "webgpu" ? "WebGPU" : "WASM (CPU)"}${st.loadMs ? ` · loaded in ${(st.loadMs / 1000).toFixed(1)}s` : ""}`
+      : st.status === "loading"
+        ? `Loading… ${pct ? `${pct}%` : ""}`
+        : st.status === "error"
+          ? `Failed: ${st.error}`
+          : "Not loaded";
+  $("#localStatus").textContent = text;
+  $("#localStatus").className = `local-status ${st.status}`;
+  $("#localBar").style.width = `${st.status === "ready" ? 100 : pct}%`;
+  $("#localLoad").disabled = st.status === "loading" || st.status === "ready";
+  $("#localLoad").textContent = st.status === "ready" ? "Loaded" : st.status === "loading" ? "Loading…" : "Download & load";
+  localChip.textContent = st.status === "ready" ? "on-device: ready" : st.status === "loading" ? `on-device: ${pct}%` : st.status === "error" ? "on-device: error" : "on-device: off";
+  localChip.dataset.state = st.status;
+});
+$("#localLoad").addEventListener("click", () => loadLocalModel().catch(() => {}));
+localChip.addEventListener("click", openSettings);
+
+// ------------------------------------------------------------ vault import
+
+$("#vaultImportBtn").addEventListener("click", () => $("#vaultFile").click());
+$("#vaultFile").addEventListener("change", async (e) => {
+  const files = [...e.target.files];
+  e.target.value = "";
+  if (!files.length) return;
+  const review = $("#vaultReview");
+  const useGemini = $("#vaultGemini").checked;
+  const s = await loadSettings();
+  if (useGemini && !s.apiKey && !$("#apiKey").value.trim()) {
+    review.replaceChildren(h("div", { class: "note warn" }, "Add a Gemini API key first, or untick Gemini extraction."));
+    return;
+  }
+  const status = h("div", { class: "watch" }, h("span", { class: "spinner" }), `Reading ${files.length} file${files.length > 1 ? "s" : ""} ${useGemini ? "with Gemini" : "on this device"}…`);
+  review.replaceChildren(status);
+  const found = [];
+  const notes = [];
+  for (const f of files) {
+    try {
+      const r = await extractFromFile(f, { mode: useGemini ? "gemini" : "local", apiKey: $("#apiKey").value.trim() || s.apiKey, model: s.detectModel });
+      found.push(...r.fields);
+      notes.push(`${f.name}: ${r.fields.length} field${r.fields.length === 1 ? "" : "s"} via ${r.method}${r.note ? ` (${r.note})` : ""}`);
+    } catch (err) {
+      notes.push(`${f.name}: failed — ${err.message}`);
+    }
+  }
+  renderVaultReview(found, notes);
+});
+
+function renderVaultReview(fields, notes) {
+  const review = $("#vaultReview");
+  const rows = fields.map((f) => {
+    const keySel = h("select", {}, VAULT_FIELDS.map((k) => h("option", { value: k, ...(k === f.key ? { selected: true } : {}) }, k)));
+    const val = h("input", { value: f.value, spellcheck: "false" });
+    const on = h("input", { type: "checkbox", checked: true });
+    return { el: h("div", { class: "vr-row" }, on, keySel, val, h("span", { class: "vr-src", title: f.source }, f.source)), on, keySel, val };
+  });
+  const add = h(
+    "button",
+    {
+      class: "btn primary sm",
+      type: "button",
+      onclick: async () => {
+        const chosen = rows.filter((r) => r.on.checked && r.val.value.trim()).map((r) => ({ key: r.keySel.value, value: r.val.value.trim() }));
+        const merged = mergeIntoVault($("#vault").value, chosen);
+        $("#vault").value = merged.text;
+        await saveSettings({ vault: merged.text });
+        review.replaceChildren(h("div", { class: "note" }, `✓ Added ${merged.added} field${merged.added === 1 ? "" : "s"} to the vault (saved). The AI will only ever see them as [VAULT_…] tags.`));
+      },
+    },
+    `Add selected to vault`
+  );
+  review.replaceChildren(
+    h("div", { class: "vr" }, ...notes.map((n) => h("div", { class: "note" }, n)), ...(rows.length ? rows.map((r) => r.el) : [h("div", { class: "note warn" }, "No personal details found.")]), rows.length ? h("div", { class: "row" }, add, h("button", { class: "btn ghost sm", type: "button", onclick: () => review.replaceChildren() }, "Cancel")) : null)
+  );
+}
+
 // ------------------------------------------------------------------- init
 
 (async () => {
   const s = await loadSettings();
   applyPresenter(s.presenter);
   applyTheme(s.theme || "system");
+  // Warm the on-device model in the background once it has been downloaded.
+  if (s.localBackup !== "off" && s.localPreload !== false && (await isLocalModelCached())) loadLocalModel().catch(() => {});
   if (!s.apiKey) {
     ui.status("Add your Gemini API key in Settings (gear icon) to begin.");
   }

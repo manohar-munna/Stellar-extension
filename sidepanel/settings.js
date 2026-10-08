@@ -17,6 +17,12 @@ export const DEFAULTS = {
   // "guided" pauses briefly after every stage so people can follow along;
   // "fast" runs at full speed.
   pace: "guided",
+  // On-device FastVLM: "auto" = backup when Gemini fails, "always" = local
+  // only (nothing sent to the cloud), "off" = never.
+  localBackup: "auto",
+  localPreload: true,
+  // Vault import: "local" (on-device) or "gemini" (uploads the document).
+  vaultExtract: "local",
   vault: "",
 };
 
