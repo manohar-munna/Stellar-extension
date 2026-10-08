@@ -7,7 +7,6 @@ import { listModels } from "./gemini.js";
 import { CATEGORY_COLORS } from "./privacy.js";
 import { loadLocalModel, onLocalState, isLocalModelCached, localState, LOCAL_MODEL } from "./local/vlm.js";
 import { extractFromFile, mergeIntoVault, VAULT_FIELDS } from "./vault-import.js";
-import { trainingStats, exportDataset, clearTraining, patchEpisode } from "./training.js";
 
 const $ = (sel) => document.querySelector(sel);
 const STAGES = ["capture", "detect", "redact", "send", "reason", "validate", "execute"];
@@ -955,8 +954,6 @@ async function openSettings() {
   document.querySelector(`input[name=localBackup][value=${s.localBackup || "auto"}]`).checked = true;
   $("#localPreload").checked = s.localPreload !== false;
   $("#vaultGemini").checked = s.vaultExtract === "gemini";
-  $("#collectTraining").checked = !!s.collectTraining;
-  refreshTrainStats();
   $("#vaultReview").replaceChildren();
   $("#askRisky").checked = s.askRisky;
   $("#maxSteps").value = s.maxSteps;
@@ -1007,7 +1004,6 @@ $("#saveSettings").addEventListener("click", async () => {
     localBackup: document.querySelector("input[name=localBackup]:checked")?.value || "auto",
     localPreload: $("#localPreload").checked,
     vaultExtract: $("#vaultGemini").checked ? "gemini" : "local",
-    collectTraining: $("#collectTraining").checked,
     askRisky: $("#askRisky").checked,
     maxSteps: Math.max(1, Math.min(50, parseInt($("#maxSteps").value, 10) || 15)),
     vault: $("#vault").value,
@@ -1097,45 +1093,6 @@ function renderVaultReview(fields, notes) {
     h("div", { class: "vr" }, ...notes.map((n) => h("div", { class: "note" }, n)), ...(rows.length ? rows.map((r) => r.el) : [h("div", { class: "note warn" }, "No personal details found.")]), rows.length ? h("div", { class: "row" }, add, h("button", { class: "btn ghost sm", type: "button", onclick: () => review.replaceChildren() }, "Cancel")) : null)
   );
 }
-
-// ------------------------------------------------------------ training data
-
-async function refreshTrainStats() {
-  try {
-    const t = await trainingStats();
-    $("#trainStats").textContent = `${t.usable} usable examples · ${t.examples} recorded steps · ${t.successful}/${t.episodes} successful runs${t.verified ? ` · ${t.verified} verified` : ""}`;
-  } catch (e) {
-    $("#trainStats").textContent = `unavailable (${e.message})`;
-  }
-}
-
-$("#trainExport").addEventListener("click", async () => {
-  $("#trainStats").textContent = "Building dataset…";
-  const { blob, stats } = await exportDataset();
-  const a = h("a", { href: URL.createObjectURL(blob), download: `stellar-dataset-${new Date().toISOString().slice(0, 10)}.zip` });
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  $("#trainStats").textContent = `Exported ${stats.exported} examples (${stats.mcq} multiple-choice) · shortlist hit-rate ${stats.shortlistHitRate}%`;
-});
-
-$("#trainClear").addEventListener("click", async () => {
-  if (!confirm("Delete all recorded training examples from this browser?")) return;
-  await clearTraining();
-  refreshTrainStats();
-});
-
-// Hook for automated dataset generation (scripts mark episodes they verified).
-window.__stellarTraining = {
-  stats: trainingStats,
-  exportDataset: async () => {
-    const { blob, stats } = await exportDataset();
-    const buf = new Uint8Array(await blob.arrayBuffer());
-    let s = "";
-    for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));
-    return { base64: btoa(s), stats };
-  },
-  markLastEpisode: (patch) => agent.lastEpisode && patchEpisode(agent.lastEpisode, patch),
-};
 
 // ------------------------------------------------------------------- init
 

@@ -23,9 +23,6 @@ export const DEFAULTS = {
   localPreload: true,
   // Vault import: "local" (on-device) or "gemini" (uploads the document).
   vaultExtract: "local",
-  // Record Gemini-decided steps as fine-tuning examples (sanitized data only).
-  collectTraining: false,
-  trainingSource: "user",
   vault: "",
 };
 

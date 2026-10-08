@@ -9,7 +9,6 @@ import { loadBitmap, renderDetection, renderSanitized, encodeJpeg } from "./reda
 import { validateAction } from "./validate.js";
 import { localDecide } from "./local/planner.js";
 import { LOCAL_MODEL } from "./local/vlm.js";
-import { startEpisode, addExample, endEpisode } from "./training.js";
 
 const NEW_TAB_URL = /^(chrome:\/\/(newtab|new-tab-page)|chrome-search:\/\/|about:blank|edge:\/\/newtab)/;
 
@@ -160,24 +159,6 @@ export class StellarAgent {
     const maxSteps = snapshot ? 1 : Math.max(1, Math.min(50, Number(settings.maxSteps) || 15));
     let consecutiveBlocks = 0;
     let tabId = null;
-    // Training-data recorder (Settings → Training data). Never allowed to break a run.
-    let episode = null;
-    let pendingRec = null;
-    let outcome = null;
-    const finishRun = (o) => {
-      outcome = o;
-      ui.finish(o);
-    };
-    const record = async (extra) => {
-      if (!episode || !pendingRec) return;
-      const rec = { ...pendingRec, ...extra };
-      pendingRec = null;
-      try {
-        await addExample(episode, rec);
-      } catch (err) {
-        console.warn("[stellar] training record failed", err);
-      }
-    };
 
     ui.runStarted({ task, snapshot, settings, maxSteps });
 
@@ -205,13 +186,6 @@ export class StellarAgent {
         );
       }
       tabId = tab.id;
-      if (settings.collectTraining && !snapshot && !localOnly) {
-        try {
-          episode = await startEpisode({ host: hostOf(tab.url), source: settings.trainingSource || "user" });
-        } catch (err) {
-          console.warn("[stellar] training episode failed", err);
-        }
-      }
       const windowId = tab.windowId;
 
       for (let step = 1; step <= maxSteps; step++) {
@@ -361,7 +335,7 @@ export class StellarAgent {
           throw new Error(`Leak check failed: ${leaks.map((t) => `[${t}]`).join(", ")} found in outbound text. Nothing was sent.`);
         }
         if (snapshot) {
-          finishRun({
+          ui.finish({
             ok: true,
             message: `Snapshot complete — ${regions.length} private region(s) redacted, ${elements.length} elements tagged. Nothing was sent for reasoning.`,
           });
@@ -399,24 +373,6 @@ export class StellarAgent {
               onRetry: (ms) => ui.status(`Gemini is busy — retrying in ${Math.round(ms / 1000)}s…`),
             });
             decision = res.json;
-            if (episode) {
-              pendingRec = {
-                step,
-                image: sanitized.dataUrl,
-                task: scrubText(task, secrets, { generic: false }),
-                host: hostOf(scan.url),
-                viewport: { w: scan.viewport.w, h: scan.viewport.h },
-                elements: elements.map((e) => ({
-                  tag: e.tag, kind: e.kind, label: e.label, inputType: e.inputType, filled: e.filled, checked: e.checked,
-                  disabled: e.disabled, sensitive: e.sensitive, options: e.options, selected: e.selected, form: e.form, rect: e.rect,
-                })),
-                history: history.map((h) => h.text),
-                vaultTags: vault.map((v) => v.tag),
-                hiddenTags: [...new Set(regions.map((r) => r.tag))],
-                model: res.model,
-                decision: { observation: decision?.observation, thought: decision?.thought, action: decision?.action },
-              };
-            }
             await ui.card(S, "reason", { model: res.model, latencyMs: res.latencyMs, usage: res.usage, decision, keyIndex: res.keyIndex, keyCount: res.keyCount });
           } catch (e) {
             if (this.stopped) throw new StopError();
@@ -430,13 +386,11 @@ export class StellarAgent {
         this.checkStop();
 
         if (proposed.type === "done") {
-          await record({ kind: "done", executed: true, resultOk: true, verdict: "allow" });
           ui.setStage(null);
-          finishRun({ ok: true, message: proposed.final_answer || decision.status || "Task complete." });
+          ui.finish({ ok: true, message: proposed.final_answer || decision.status || "Task complete." });
           return;
         }
         if (proposed.type === "ask_user") {
-          await record({ kind: "ask", executed: false });
           ui.setStage(null);
           await this.cs(tabId, { op: "overlay", visible: true, message: "Stellar is waiting for you" });
           const answer = await ui.ask(S, proposed.final_answer || "The agent needs your input.");
@@ -477,7 +431,6 @@ export class StellarAgent {
           consecutiveBlocks++;
           const why = v.verdict === "block" ? `blocked by local validator: ${v.reason}` : "rejected by the user — choose a different approach or ask_user";
           history.push({ text: `Step ${step}: ${summary} → NOT EXECUTED (${why})`, sig: v.sig });
-          await record({ kind: "action", executed: false, verdict: v.verdict, approved });
           await ui.card(S, "execute", { skipped: true, detail: why });
           if (consecutiveBlocks >= 3) throw new Error("Stopped after 3 consecutive blocked/rejected actions.");
           continue;
@@ -520,21 +473,12 @@ export class StellarAgent {
         }
         await ui.card(S, "execute", { ms: Math.round(performance.now() - t3), ...result, summary, userNote });
         history.push({ text: `Step ${step}: ${summary} → ${result.ok ? "ok" : "FAILED"}: ${result.detail}`, sig: v.sig });
-        await record({ kind: "action", executed: true, resultOk: !!result.ok, verdict: v.verdict, approved, newTab: !!newTab });
       }
-      finishRun({ ok: false, message: `Reached the step limit (${maxSteps}). Increase it in Settings or refine the task.` });
+      ui.finish({ ok: false, message: `Reached the step limit (${maxSteps}). Increase it in Settings or refine the task.` });
     } catch (e) {
-      if (e instanceof StopError || this.stopped) finishRun({ ok: false, message: "Stopped." });
-      else finishRun({ ok: false, message: e.message || String(e) });
+      if (e instanceof StopError || this.stopped) ui.finish({ ok: false, message: "Stopped." });
+      else ui.finish({ ok: false, message: e.message || String(e) });
     } finally {
-      if (episode) {
-        try {
-          await endEpisode(episode, outcome || { ok: false, message: "ended" });
-        } catch (err) {
-          console.warn("[stellar] training episode end failed", err);
-        }
-        this.lastEpisode = episode;
-      }
       this.running = false;
       ui.setStage(null);
       try {
@@ -555,14 +499,6 @@ async function findTargetTab() {
   if (!win) return null;
   const [tab] = await chrome.tabs.query({ active: true, windowId: win.id });
   return tab || null;
-}
-
-function hostOf(url) {
-  try {
-    return new URL(url).host;
-  } catch {
-    return "";
-  }
 }
 
 function toCanvas(bitmap) {
