@@ -10,6 +10,9 @@ const RISKY_WORDS =
 
 const TAG_IN_TEXT = /\[[A-Z][A-Z0-9_]*\]/;
 
+// Page-detected categories whose values are credentials or identifiers.
+const HIGH_RISK_TAG = /^(PASSWORD|API_KEY|OTP|CVV|CARD|ACCOUNT|GOV_ID)_\d+$/;
+
 /**
  * @returns {{ verdict: "allow"|"confirm"|"block", checks: Array<{ok:boolean, level:string, label:string}>,
  *             action: object, displayText?: string, reason: string }}
@@ -89,9 +92,22 @@ export async function validateAction(proposed, { inspect, elements, secrets, set
       displayText = String(action.text ?? "");
       if (sub.substituted.length) {
         const vaultTags = sub.substituted.filter((t) => t.startsWith("VAULT_"));
+        const pageTags = sub.substituted.filter((t) => !t.startsWith("VAULT_"));
         pass(`Resolved ${sub.substituted.map((t) => `[${t}]`).join(", ")} locally — value never sent to the cloud`);
         if (vaultTags.length && settings.askRisky) {
           confirm(`Fill vault data (${vaultTags.map((t) => `[${t}]`).join(", ")}) into this page?`);
+        }
+        // Copying a secret that was *on the page* into a field is how data gets
+        // pasted somewhere it shouldn't go (prompt injection, chat boxes, forms
+        // that send it elsewhere). Always ask, whatever the risky-action setting.
+        if (pageTags.length) {
+          const list = pageTags.map((t) => `[${t}]`).join(", ");
+          const critical = pageTags.filter((t) => HIGH_RISK_TAG.test(t));
+          confirm(
+            critical.length
+              ? `Paste on-page secret ${list} into "${known.label}"? This copies a credential/ID value into the page${info.sensitive ? "" : " — and the field is not a password/secret field"}.`
+              : `Copy on-page value ${list} into "${known.label}"?`
+          );
         }
       }
       action.text = sub.text;
