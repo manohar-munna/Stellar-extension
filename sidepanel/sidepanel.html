@@ -64,29 +64,10 @@
     </nav>
 
     <div class="workspace">
-      <aside class="rail" id="rail" aria-label="Pipeline progress">
-        <div class="rail-step">
-          <span class="lbl" id="railStepLbl">Step</span>
-          <b id="railStep">–</b>
-          <div class="bar"><i id="railBar"></i></div>
-        </div>
-        <ol id="railStages">
-          <li data-stage="capture"><span class="ic">◉</span><span class="nm">Capture</span><span class="zn"></span></li>
-          <li data-stage="detect"><span class="ic">◎</span><span class="nm">Detect</span><span class="zn"></span></li>
-          <li data-stage="redact"><span class="ic">▣</span><span class="nm">Redact</span><span class="zn"></span></li>
-          <li data-stage="send"><span class="ic">⇡</span><span class="nm">Send</span><span class="zn"></span></li>
-          <li data-stage="reason"><span class="ic">✦</span><span class="nm">Reason</span><span class="zn"></span></li>
-          <li data-stage="validate"><span class="ic">✓</span><span class="nm">Validate</span><span class="zn"></span></li>
-          <li data-stage="execute"><span class="ic">▶</span><span class="nm">Execute</span><span class="zn"></span></li>
-        </ol>
-        <div class="rail-result" id="railResult"></div>
-        <div class="rail-legend"><span class="zl">● on-device</span><span class="zc">● cloud</span></div>
-      </aside>
-
       <main id="feed">
         <div class="intro" id="intro">
           <h2>What you'll see here</h2>
-          <p>Every step of the agent is shown as it happens. The rail on the left tracks the current stage:</p>
+          <p>Every step of the agent is shown as it happens:</p>
           <ol>
             <li><b>Capture</b> the visible tab and tag every clickable element (<code>[BUTTON_03]</code>).</li>
             <li><b>Detect</b> credentials &amp; personal data — DOM rules on-device, plus the Gemini vision detector.</li>
@@ -95,7 +76,7 @@
             <li><b>Reason</b>: Gemini proposes one action.</li>
             <li><b>Validate</b> locally (allow-list, risky-action approval, tag resolution) and <b>Execute</b>.</li>
           </ol>
-          <p class="hint">Each task gets its own tab above. Finished steps fold into one line — click to expand.</p>
+          <p class="hint">Each task gets its own tab. Every step shows a short brief — what was hidden, what was sent and what the model saw. Click a step (or a segment of its stage bar) for the full detail.</p>
         </div>
       </main>
     </div>

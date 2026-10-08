@@ -231,7 +231,7 @@ const RENDER = {
 
 // ---------------------------------------------------------------- runs
 
-// Static description of each stage for the rail, step dots and placeholders.
+// Static description of each stage for the stage bars and placeholders.
 const STAGE_META = {
   capture: { zone: "local", zn: "device", doing: "Capturing the visible tab and tagging elements…" },
   detect: { zone: "local", zn: "device", doing: "Scanning for credentials & personal data…" },
@@ -271,6 +271,8 @@ function makeRun({ task, snapshot, settings, maxSteps }) {
     stage: null,
     steps: [],
     result: null,
+    t0: performance.now(),
+    stats: { tags: new Set(), bytes: 0, leaks: 0 },
     log: {
       task,
       mode: snapshot ? "snapshot" : "agent",
@@ -288,7 +290,8 @@ function makeRun({ task, snapshot, settings, maxSteps }) {
       "div",
       { class: "run-h" },
       h("div", { class: "lbl" }, snapshot ? "Snapshot" : `Task ${id}`),
-      h("div", { class: "task" }, snapshot ? task || "Capture → Detect → Redact preview" : task)
+      h("div", { class: "task" }, snapshot ? task || "Capture → Detect → Redact preview" : task),
+      (run.statsEl = h("div", { class: "run-stats" }))
     ),
     h(
       "div",
@@ -331,7 +334,6 @@ function selectRun(run) {
     r.tab.classList.toggle("sel", r === run);
   }
   run?.tab.scrollIntoView({ inline: "nearest", block: "nearest" });
-  renderRail();
 }
 
 function closeRun(run) {
@@ -340,84 +342,46 @@ function closeRun(run) {
   run.tab.remove();
   runs.splice(runs.indexOf(run), 1);
   if (selectedRun === run) selectRun(runs[runs.length - 1] || null);
-  if (!runs.length) {
-    runbar.hidden = true;
-    renderRail();
-  }
+  if (!runs.length) runbar.hidden = true;
 }
 
 function setRunStatus(run, status) {
   run.status = status;
   run.dot.className = `sdot ${status}`;
-  if (run === selectedRun) renderRail();
+  updateRunStats(run);
 }
 
 function setAllCollapsed(run, collapsed) {
   for (const s of run.steps) s.el.classList.toggle("collapsed", collapsed);
 }
 
-// ---------------------------------------------------------------- rail
-
-const railItems = [...document.querySelectorAll("#railStages li")];
-railItems.forEach((li) => li.addEventListener("click", () => jumpToStage(li.dataset.stage)));
-
-function renderRail() {
-  const run = selectedRun;
-  const step = run?.steps[run.steps.length - 1];
-  $("#railStepLbl").textContent = run?.snapshot ? "Snapshot" : "Step";
-  $("#railStep").textContent = run ? (run.snapshot ? "1/1" : `${run.steps.length}/${run.maxSteps}`) : "–";
-  const finished = run && run.status !== "running" && run.status !== "waiting";
-  const pct = !run ? 0 : finished ? 100 : Math.round((Math.max(0, run.steps.length - 1) / run.maxSteps) * 100 + (100 / run.maxSteps) * stageFraction(run));
-  $("#railBar").style.width = `${Math.min(100, pct)}%`;
-
-  for (const li of railItems) {
-    const stage = li.dataset.stage;
-    const z = zoneOf(run, stage);
-    li.className = `zone-${z.zone}`;
-    li.querySelector(".zn").textContent = z.zn;
-    const state = step?.stages.get(stage);
-    if (state) li.classList.add(state);
-    if (run && run.stage === stage && !finished) li.classList.add("active");
-    li.title = `${li.querySelector(".nm").textContent} — ${z.zone === "cloud" ? "runs in the cloud on sanitized data" : z.zone === "mixed" ? "on-device rules + Gemini vision detector" : "runs on this device"}`;
-  }
-
-  const res = $("#railResult");
-  if (!run) {
-    res.textContent = "";
-    res.className = "rail-result";
-  } else if (run.status === "running") {
-    res.textContent = "running";
-    res.className = "rail-result live";
-  } else if (run.status === "waiting") {
-    res.textContent = "needs you";
-    res.className = "rail-result live";
-  } else {
-    res.textContent = run.status === "done" ? "✓ done" : "■ stopped";
-    res.className = `rail-result ${run.status === "done" ? "ok" : "bad"}`;
-  }
-}
-
-function stageFraction(run) {
-  const step = run.steps[run.steps.length - 1];
-  return step ? step.stages.size / STAGES.length : 0;
-}
-
-function jumpToStage(stage) {
-  const run = selectedRun;
-  const step = run?.steps[run.steps.length - 1];
-  if (!step) return;
-  step.el.classList.remove("collapsed");
-  const cardEl = step.body.querySelector(`.card[data-stage="${stage}"]`);
-  cardEl?.scrollIntoView({ block: "start", behavior: "smooth" });
-}
-
 // ---------------------------------------------------------------- steps
+// Each step shows a brief (stage bar + what was hidden / sent / seen) that
+// stays visible when the step is folded; the full stage cards sit below it.
+
+const cap = (s) => s[0].toUpperCase() + s.slice(1);
+const kb = (bytes) => `${Math.round(bytes / 1024)} KB`;
+
+function updateRunStats(run) {
+  const n = run.steps.length;
+  const secs = ((performance.now() - run.t0) / 1000).toFixed(1);
+  const parts = [
+    run.snapshot ? "snapshot" : `${n} step${n === 1 ? "" : "s"}`,
+    `${run.stats.tags.size} private item${run.stats.tags.size === 1 ? "" : "s"} hidden`,
+    run.stats.bytes ? `${kb(run.stats.bytes)} sanitized sent` : "nothing sent",
+    `${run.stats.leaks} leak${run.stats.leaks === 1 ? "" : "s"}`,
+    `${secs}s`,
+  ];
+  run.statsEl.textContent = parts.join(" · ");
+}
 
 function makeStep(run, n) {
-  const step = { n, t0: performance.now(), stages: new Map(), action: "", result: null };
-  step.sum = h("span", { class: "sum" }, "working…");
+  const step = { n, t0: performance.now(), stages: new Map(), action: "", result: null, rows: {} };
+  step.sum = h("span", { class: "sum" }, h("span", { class: "spinner sm" }), "Working…");
   step.time = h("span", { class: "time" });
-  step.dots = h("span", { class: "dots" });
+  step.bar = h("div", { class: "stagebar" });
+  step.stageLbl = h("span", { class: "stage-lbl" });
+  step.brief = h("div", { class: "brief" }, h("div", { class: "stage-row" }, step.bar, step.stageLbl));
   step.body = h("div", { class: "step-body" });
   step.el = h(
     "section",
@@ -427,20 +391,62 @@ function makeStep(run, n) {
       { class: "step-h", onclick: () => step.el.classList.toggle("collapsed") },
       h("span", { class: "n" }, run.snapshot ? "Snapshot" : `Step ${n}`),
       step.sum,
-      step.dots,
       step.time,
       h("span", { class: "chev" }, "▾")
     ),
+    step.brief,
     step.body
   );
-  renderDots(run, step);
+  renderStageBar(run, step);
   return step;
 }
 
-function renderDots(run, step) {
-  step.dots.replaceChildren(
-    ...STAGES.map((s) => h("i", { class: `zone-${zoneOf(run, s).zone} ${step.stages.get(s) || ""}`, title: s }))
+/** Seven segments, coloured by where each stage runs; click one to open its card. */
+function renderStageBar(run, step) {
+  const live = step.el.classList.contains("live") && run.stage;
+  step.bar.replaceChildren(
+    ...STAGES.map((s) => {
+      const z = zoneOf(run, s);
+      const state = step.stages.get(s) || (live && run.stage === s ? "active" : "");
+      return h("button", {
+        class: `seg zone-${z.zone} ${state}`,
+        title: `${STAGES.indexOf(s) + 1}. ${cap(s)} — ${z.zone === "cloud" ? "cloud, sanitized data only" : z.zone === "mixed" ? "on-device rules + Gemini vision detector" : "on this device"}`,
+        onclick: (e) => {
+          e.stopPropagation();
+          jumpTo(step, s);
+        },
+      });
+    })
   );
+  if (live) {
+    const z = zoneOf(run, run.stage);
+    step.stageLbl.className = `stage-lbl zone-${z.zone}`;
+    step.stageLbl.textContent = `${STAGES.indexOf(run.stage) + 1}/7 ${cap(run.stage)} · ${z.zn}`;
+  } else {
+    step.stageLbl.className = "stage-lbl";
+    step.stageLbl.textContent = "";
+  }
+}
+
+function jumpTo(step, stage) {
+  step.el.classList.remove("collapsed");
+  const target = step.body.querySelector(`.card[data-stage="${stage}"]`) || step.body;
+  target.scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
+/** Create or update one line of the step brief (hidden / sent / saw). */
+function setBrief(step, key, kind, label, ...content) {
+  const row = h("div", { class: `bl bl-${kind}` }, h("span", { class: "bl-k" }, label), h("span", { class: "bl-v" }, ...content));
+  if (step.rows[key]) step.rows[key].replaceWith(row);
+  else step.brief.append(row);
+  step.rows[key] = row;
+}
+
+function tagChips(regions, max = 6) {
+  const uniq = uniqueRegions(regions);
+  const chips = uniq.slice(0, max).map((r) => tagChip(r.tag, r.category));
+  if (uniq.length > max) chips.push(h("span", { class: "more" }, `+${uniq.length - max}`));
+  return chips;
 }
 
 function summarizeStep(run, step, { collapse }) {
@@ -450,7 +456,8 @@ function summarizeStep(run, step, { collapse }) {
   step.sum.replaceChildren(...[mark, step.action || (r?.text ?? "—")].filter(Boolean));
   step.sum.title = [step.action, r?.text].filter(Boolean).join(" → ");
   step.time.textContent = `${((performance.now() - step.t0) / 1000).toFixed(1)}s`;
-  renderDots(run, step);
+  renderStageBar(run, step);
+  updateRunStats(run);
   if (collapse) step.el.classList.add("collapsed");
 }
 
@@ -484,7 +491,7 @@ const ui = {
     run.steps.push(step);
     run.log.steps.push({ step: n, cards: [] });
     append(run.el, step.el);
-    renderRail();
+    updateRunStats(run);
     return step;
   },
 
@@ -510,7 +517,7 @@ const ui = {
       );
       append(step.body, ph);
     }
-    if (run === selectedRun) renderRail();
+    if (step) renderStageBar(run, step);
   },
 
   card(S, stage, data) {
@@ -524,7 +531,7 @@ const ui = {
     if (ph) ph.replaceWith(node);
     else append(S.body, node);
 
-    // Track what the step did for its one-line summary and the rail.
+    // Track what the step did for its summary and stage bar.
     S.stages.set(stage, data.skipped ? "skipped" : data.verdict === "block" ? "blocked" : "done");
     if (stage === "validate") S.action = data.summary;
     if (stage === "reason" && ["done", "ask_user"].includes(data.decision?.action?.type)) {
@@ -538,9 +545,36 @@ const ui = {
       S.result = { kind: "ok", text: "nothing sent for reasoning" };
       for (const s of ["reason", "validate", "execute"]) S.stages.set(s, "skipped");
     }
-    renderDots(run, S);
+    this.brief(run, S, stage, data);
+    renderStageBar(run, S);
     run.log.steps[run.log.steps.length - 1].cards.push({ stage, ...exportable(stage, data) });
-    if (run === selectedRun) renderRail();
+  },
+
+  /** Fill the step's short brief from a stage's data. */
+  brief(run, S, stage, data) {
+    if (stage === "detect") {
+      const uniq = uniqueRegions(data.regions);
+      uniq.forEach((r) => run.stats.tags.add(r.tag));
+      const how = data.mode === "vision" ? "on-device rules + vision detector" : "on-device rules";
+      if (uniq.length) setBrief(S, "hidden", "local", "Hidden", `${uniq.length} private item${uniq.length === 1 ? "" : "s"}`, h("span", { class: "chips" }, tagChips(data.regions)));
+      else setBrief(S, "hidden", "local", "Hidden", h("span", { class: "dim" }, `nothing private on screen (${how})`));
+    }
+    if (stage === "send") {
+      if (data.snapshot) {
+        setBrief(S, "sent", "local", "Sent", h("span", { class: "dim" }, "nothing — snapshot preview stays on this device"));
+      } else {
+        S.sendInfo = `${kb(data.bytes)} sanitized frame + ${data.prompt.length.toLocaleString()} chars`;
+        S.leakOk = !data.leaks.length;
+        run.stats.bytes += data.bytes;
+        run.stats.leaks += data.leaks.length;
+        setBrief(S, "sent", "cloud", "Sent", S.sendInfo, h("span", { class: `pill ${S.leakOk ? "ok" : "bad"}` }, S.leakOk ? "✓ 0 leaks" : "✗ blocked"));
+      }
+    }
+    if (stage === "reason") {
+      setBrief(S, "sent", "cloud", "Sent", `to ${data.model}: ${S.sendInfo || ""}`, h("span", { class: `pill ${S.leakOk === false ? "bad" : "ok"}` }, S.leakOk === false ? "✗ blocked" : "✓ 0 leaks"));
+      if (data.decision?.observation) setBrief(S, "saw", "muted", "Saw", data.decision.observation);
+    }
+    updateRunStats(run);
   },
 
   status(text) {
@@ -615,6 +649,7 @@ const ui = {
     const run = activeRun;
     setRunStatus(run, "waiting");
     S.action = `human verification — ${kind}`;
+    setBrief(S, "sent", "local", "Sent", h("span", { class: "dim" }, `nothing — paused for you to complete the ${kind}`));
     let resolveDone;
     const done = new Promise((r) => (resolveDone = r));
     const live = h("div", { class: "watch" }, h("span", { class: "spinner" }), "Watching the tab — resumes automatically once the check is cleared…");
@@ -642,7 +677,7 @@ const ui = {
       buttons.remove();
       S.result = v === "auto" || v === "manual" ? { kind: "ok", text: "completed by you" } : { kind: "bad", text: msg };
       for (const s of STAGES.slice(1)) S.stages.set(s, "skipped");
-      renderDots(run, S);
+      renderStageBar(run, S);
       if (run.status === "waiting") setRunStatus(run, "running");
       resolveDone(v);
     };
@@ -676,6 +711,7 @@ const ui = {
     run.log.result = { ok, message, finishedAt: new Date().toISOString() };
     activeRun = null;
     setRunStatus(run, ok ? "done" : "stopped");
+    updateRunStats(run);
     if (run === selectedRun) run.el.lastChild.scrollIntoView({ block: "nearest", behavior: "smooth" });
     this.status("");
     setRunning(false);
