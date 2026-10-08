@@ -11,6 +11,7 @@ import { validateAction } from "./validate.js";
 import { localDecide } from "./local/planner.js";
 import { LOCAL_MODEL, holdLocalModel, loadLocalModel, isLocalModelCached, localState } from "./local/vlm.js";
 import { detectFaces } from "./local/faces.js";
+import { RealInput } from "./real-input.js";
 
 const NEW_TAB_URL = /^(chrome:\/\/(newtab|new-tab-page)|chrome-search:\/\/|about:blank|edge:\/\/newtab)/;
 
@@ -147,33 +148,24 @@ export class StellarAgent {
 
   /**
    * Chrome only hands autofilled logins to the page after a trusted user
-   * gesture, which synthetic DOM events are not. A click sent through the
-   * debugger protocol goes through Chrome's real input pipeline, so one click
-   * on a blank part of the form releases the values. The debugger is attached
-   * only for that click. Never used on buttons, fields or CAPTCHAs — the point
-   * comes from the content script's quiet-point search.
+   * gesture, which synthetic DOM events are not. A real click (debugger
+   * protocol) on a blank part of the form releases the values. Never used on
+   * buttons, fields or CAPTCHAs — the point comes from the content script's
+   * quiet-point search.
    * @returns {Promise<{x,y,on}|null>} the point clicked, when Chrome released the values
    */
   async unlockAutofill(tabId) {
-    if (!chrome.debugger) return null;
     let pt;
     try {
       pt = await this.cs(tabId, { op: "quiet-point" });
     } catch {
       return null;
     }
-    if (!pt) return null;
-    const target = { tabId };
+    if (!pt || !(await this.real.attach(tabId))) return null;
     try {
-      await chrome.debugger.attach(target, "1.3");
-      const send = (type, extra = {}) => chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type, x: pt.x, y: pt.y, ...extra });
-      await send("mouseMoved");
-      await send("mousePressed", { button: "left", buttons: 1, clickCount: 1 });
-      await send("mouseReleased", { button: "left", buttons: 0, clickCount: 1 });
+      await this.real.click(pt.x, pt.y);
     } catch {
       return null;
-    } finally {
-      await chrome.debugger.detach(target).catch(() => {});
     }
     for (let i = 0; i < 12; i++) {
       await sleep(150);
@@ -183,6 +175,59 @@ export class StellarAgent {
     return null;
   }
 
+  /**
+   * Execute a validated action. With real input on (Settings → Agent), clicks,
+   * typing and keys go through Chrome's real mouse and keyboard, which works on
+   * React/Vue fields, rich-text editors, custom dropdowns and buttons that
+   * ignore scripted events; scripted DOM events are the fallback. Points on a
+   * CAPTCHA / bot check are refused outright — never clicked either way.
+   */
+  async perform(tabId, a) {
+    const dom = async (action = a) => (await this.cs(tabId, { op: "execute", action })) || { ok: false, detail: "no response from page" };
+    if (this.settings.realClick === false || !this.real.available || !["click", "type", "select", "press_key"].includes(a.type)) return dom();
+
+    try {
+      if (a.type === "press_key") {
+        if (a.target) await this.cs(tabId, { op: "focus", tag: a.target });
+        if (!(await this.real.attach(tabId))) return dom();
+        await this.real.key(a.key || "Enter");
+        return { ok: true, detail: `pressed ${a.key || "Enter"} (real keyboard)` };
+      }
+
+      // Native <select> popups can't be driven by mouse events; set those directly.
+      if (a.type === "select" && (await this.cs(tabId, { op: "inspect", tag: a.target }))?.isSelect) return dom();
+
+      const p = await this.cs(tabId, { op: "point", tag: a.target });
+      if (!p?.ok) {
+        if (p?.challenge) return { ok: false, detail: `${p.reason} — Stellar never clicks those` };
+        return dom(); // covered or zero-size: try the scripted path
+      }
+      if (!(await this.real.attach(tabId))) return dom();
+      await this.real.click(p.x, p.y);
+
+      if (a.type === "click") return { ok: true, detail: `clicked ${a.target} (real mouse)` };
+      if (a.type === "select") return { ok: true, detail: `opened ${a.target} (custom dropdown, real mouse)` };
+
+      // type: the click focused the field; clear it, type, then check it took.
+      await sleep(60);
+      if (a.clear !== false) await this.real.clearFocused();
+      await this.real.insertText(String(a.text ?? ""));
+      await sleep(80);
+      const back = await this.cs(tabId, { op: "readback", tag: a.target }).catch(() => null);
+      const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9@]/g, "");
+      if (!back?.exists || !norm(back.value).includes(norm(a.text))) {
+        const r = await dom({ ...a, submit: false });
+        if (!r.ok) return r;
+      }
+      if (a.submit) await this.real.key("Enter");
+      return { ok: true, detail: `typed into ${a.target} (real keyboard)${a.submit ? " + Enter" : ""}` };
+    } catch (e) {
+      // Debugger unavailable mid-action (bar cancelled, page navigated): scripted fallback.
+      if (/detached|not attached|Cannot access|No tab/i.test(e.message || "")) return dom();
+      throw e;
+    }
+  }
+
   // ------------------------------------------------------------------ run
 
   async run({ task, mode }) {
@@ -190,6 +235,7 @@ export class StellarAgent {
     this.stopped = false;
     this.running = true;
     this.abort = new AbortController();
+    this.real = new RealInput(); // attached on first real click/keystroke, detached when the run ends
     const { settings, ui } = this;
     const snapshot = mode === "snapshot";
     // "always": nothing goes to the cloud; the on-device model plans every step.
@@ -629,7 +675,7 @@ export class StellarAgent {
             await sleep(1500);
             result = { ok: true, detail: "waited 1.5s" };
           } else {
-            result = (await this.cs(tabId, { op: "execute", action: a })) || { ok: false, detail: "no response from page" };
+            result = await this.perform(tabId, a);
           }
           await this.settle(tabId);
         } finally {
@@ -650,6 +696,7 @@ export class StellarAgent {
       else ui.finish({ ok: false, message: e.message || String(e) });
     } finally {
       if (holdModel) holdLocalModel(false);
+      await this.real.detach();
       this.running = false;
       ui.setStage(null);
       try {

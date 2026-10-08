@@ -680,6 +680,66 @@
     };
   }
 
+  // ------------------------------------------------ real-input helpers
+  // The side panel sends real mouse/keyboard input through chrome.debugger;
+  // these find where to click and check the result afterwards.
+
+  function inChallengeArea(x, y) {
+    const frames = deepQueryAll("iframe").filter((f) => CHALLENGES.some((c) => c.frame.test(f.src || f.getAttribute("src") || "")));
+    const boxes = [...frames, ...document.querySelectorAll(CHALLENGE_CONTAINERS)].map((n) => n.getBoundingClientRect());
+    return boxes.some((r) => x >= r.left - 8 && x <= r.right + 8 && y >= r.top - 8 && y <= r.bottom + 8);
+  }
+
+  /** A visible, unobstructed point on the target — never on a CAPTCHA / bot check. */
+  async function pointFor(tag) {
+    const el = elementMap.get(tag);
+    if (!el || !el.isConnected) return { ok: false, reason: `element ${tag} is no longer on the page` };
+    if (el.closest(challengeElSelector())) return { ok: false, reason: "target is part of a CAPTCHA / bot check", challenge: true };
+    el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    await sleep(80);
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return { ok: false, reason: `${tag} has no size on screen` };
+    const hits = (x, y) => {
+      const hit = document.elementFromPoint(x, y);
+      return !!hit && (hit === el || el.contains(hit) || (el.labels && [...el.labels].some((l) => l.contains(hit))));
+    };
+    const candidates = [
+      [0.5, 0.5], [0.25, 0.5], [0.75, 0.5], [0.5, 0.3], [0.5, 0.7], [0.15, 0.5], [0.85, 0.5],
+    ].map(([fx, fy]) => [r.left + r.width * fx, r.top + r.height * fy]);
+    for (const [x, y] of candidates) {
+      if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) continue;
+      if (inChallengeArea(x, y)) return { ok: false, reason: "that point is on a CAPTCHA / bot check", challenge: true };
+      if (hits(x, y)) {
+        showCursor(x, y);
+        flash(el, `real input [${tag}]`);
+        return { ok: true, x: Math.round(x), y: Math.round(y) };
+      }
+    }
+    return { ok: false, reason: `${tag} is covered by another element` };
+  }
+
+  /** What the target holds now — to confirm real typing/selection worked. */
+  function readback(tag) {
+    const el = elementMap.get(tag);
+    if (!el) return { exists: false };
+    if (el instanceof HTMLSelectElement) return { exists: true, value: el.options[el.selectedIndex]?.text || "" };
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return { exists: true, value: el.value, focused: document.activeElement === el };
+    return { exists: true, value: (el.innerText || el.textContent || "").slice(0, 2000), focused: el.contains(document.activeElement) };
+  }
+
+  /** A visible cursor that glides to where real input lands (demo aid). */
+  function showCursor(x, y) {
+    if (!overlayHost || overlayHost.style.display === "none") return;
+    let c = overlayRoot.querySelector(".cursor");
+    if (!c) {
+      c = document.createElement("div");
+      c.className = "cursor";
+      c.style.cssText = "position:fixed;left:0;top:0;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:rgba(139,92,246,.35);border:2px solid #8b5cf6;box-shadow:0 0 0 6px rgba(139,92,246,.15);transition:transform .35s ease;pointer-events:none;z-index:2";
+      overlayRoot.appendChild(c);
+    }
+    c.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+  }
+
   async function execute(action) {
     const { type } = action;
     if (type === "scroll") {
@@ -774,6 +834,15 @@
         return detectAutofill();
       case "quiet-point":
         return quietPoint();
+      case "point":
+        return pointFor(cmd.tag);
+      case "readback":
+        return readback(cmd.tag);
+      case "focus": {
+        const el = elementMap.get(cmd.tag);
+        if (el && !el.closest(challengeElSelector())) el.focus();
+        return !!el;
+      }
       case "inspect":
         return inspect(cmd.tag);
       case "execute":
