@@ -1640,6 +1640,142 @@ table.prices tr.best td:last-child {
   --glow-b: rgba(168, 85, 247, 0.08);
 }
 
+:root[data-theme="light"][data-palette="teal"] {
+  --bg: #effaf9;
+  --surface-2: #e3f4f2;
+  --surface-3: #d1eae7;
+  --border: rgba(19, 78, 74, 0.1);
+  --border-strong: rgba(19, 78, 74, 0.18);
+  --accent: #0d9488;
+  --accent-strong: #0f766e;
+  --accent-text: #0f766e;
+  --accent-soft: rgba(20, 184, 166, 0.13);
+  --accent-ring: rgba(13, 148, 136, 0.3);
+  --grad: linear-gradient(135deg, #14b8a6 0%, #0891b2 100%);
+  --grad-brand: linear-gradient(135deg, #2dd4bf, #0891b2);
+  --glow-a: rgba(45, 212, 191, 0.16);
+  --glow-b: rgba(14, 165, 233, 0.08);
+}
+
+:root[data-theme="light"][data-palette="forest"] {
+  --bg: #f2f9f3;
+  --surface-2: #e6f2e8;
+  --surface-3: #d5e8d8;
+  --border: rgba(20, 83, 45, 0.1);
+  --border-strong: rgba(20, 83, 45, 0.18);
+  --accent: #15803d;
+  --accent-strong: #166534;
+  --accent-text: #166534;
+  --accent-soft: rgba(34, 197, 94, 0.13);
+  --accent-ring: rgba(21, 128, 61, 0.3);
+  --grad: linear-gradient(135deg, #22c55e 0%, #15803d 100%);
+  --grad-brand: linear-gradient(135deg, #4ade80, #15803d);
+  --glow-a: rgba(34, 197, 94, 0.14);
+  --glow-b: rgba(132, 204, 22, 0.08);
+}
+
+:root[data-theme="light"][data-palette="indigo"] {
+  --bg: #f4f5fd;
+  --surface-2: #ebedfa;
+  --surface-3: #dde0f5;
+  --border: rgba(49, 46, 129, 0.1);
+  --border-strong: rgba(49, 46, 129, 0.18);
+  --accent: #4f46e5;
+  --accent-strong: #4338ca;
+  --accent-text: #4338ca;
+  --accent-soft: rgba(99, 102, 241, 0.12);
+  --accent-ring: rgba(79, 70, 229, 0.28);
+  --grad: linear-gradient(135deg, #6366f1 0%, #3b82f6 100%);
+  --grad-brand: linear-gradient(135deg, #818cf8, #3b82f6);
+  --glow-a: rgba(99, 102, 241, 0.15);
+  --glow-b: rgba(59, 130, 246, 0.08);
+}
+
+:root[data-theme="light"][data-palette="berry"] {
+  --bg: #fcf4fd;
+  --surface-2: #f6e8f8;
+  --surface-3: #eed8f1;
+  --border: rgba(112, 26, 117, 0.1);
+  --border-strong: rgba(112, 26, 117, 0.18);
+  --accent: #a21caf;
+  --accent-strong: #86198f;
+  --accent-text: #86198f;
+  --accent-soft: rgba(192, 38, 211, 0.11);
+  --accent-ring: rgba(162, 28, 175, 0.28);
+  --grad: linear-gradient(135deg, #c026d3 0%, #7c3aed 100%);
+  --grad-brand: linear-gradient(135deg, #e879f9, #7c3aed);
+  --glow-a: rgba(217, 70, 239, 0.14);
+  --glow-b: rgba(124, 58, 237, 0.08);
+}
+
+:root[data-theme="light"][data-palette="coral"] {
+  --bg: #fff6f4;
+  --surface-2: #fdebe7;
+  --surface-3: #f8dbd4;
+  --border: rgba(127, 29, 29, 0.1);
+  --border-strong: rgba(127, 29, 29, 0.18);
+  --accent: #e5533d;
+  --accent-strong: #c2412b;
+  --accent-text: #bf3a25;
+  --accent-soft: rgba(239, 90, 67, 0.12);
+  --accent-ring: rgba(229, 83, 61, 0.3);
+  --grad: linear-gradient(135deg, #fb7185 0%, #f97316 100%);
+  --grad-brand: linear-gradient(135deg, #fb7185, #f97316);
+  --glow-a: rgba(251, 113, 133, 0.16);
+  --glow-b: rgba(251, 146, 60, 0.1);
+}
+
+:root[data-theme="light"][data-palette="amber"] {
+  --bg: #fffaf0;
+  --surface-2: #fdf2dd;
+  --surface-3: #f7e5c4;
+  --border: rgba(120, 53, 15, 0.1);
+  --border-strong: rgba(120, 53, 15, 0.18);
+  --accent: #d97706;
+  --accent-strong: #b45309;
+  --accent-text: #b45309;
+  --accent-soft: rgba(245, 158, 11, 0.14);
+  --accent-ring: rgba(217, 119, 6, 0.3);
+  --grad: linear-gradient(135deg, #f59e0b 0%, #ea580c 100%);
+  --grad-brand: linear-gradient(135deg, #f59e0b, #c2410c);
+  --glow-a: rgba(251, 191, 36, 0.18);
+  --glow-b: rgba(249, 115, 22, 0.08);
+}
+
+:root[data-theme="light"][data-palette="sand"] {
+  --bg: #faf6ef;
+  --surface-2: #f3ece0;
+  --surface-3: #e9dfcd;
+  --border: rgba(87, 58, 26, 0.1);
+  --border-strong: rgba(87, 58, 26, 0.18);
+  --accent: #a0612b;
+  --accent-strong: #854d20;
+  --accent-text: #7c4a1e;
+  --accent-soft: rgba(180, 120, 60, 0.13);
+  --accent-ring: rgba(160, 97, 43, 0.3);
+  --grad: linear-gradient(135deg, #c08a4f 0%, #8b5a2b 100%);
+  --grad-brand: linear-gradient(135deg, #d6a35c, #8b5a2b);
+  --glow-a: rgba(214, 163, 92, 0.16);
+  --glow-b: rgba(161, 98, 7, 0.06);
+}
+
+:root[data-theme="light"][data-palette="slate"] {
+  --bg: #f5f6f8;
+  --surface-2: #eceef2;
+  --surface-3: #dfe3e9;
+  --border: rgba(15, 23, 42, 0.1);
+  --border-strong: rgba(15, 23, 42, 0.18);
+  --accent: #475569;
+  --accent-strong: #334155;
+  --accent-text: #334155;
+  --accent-soft: rgba(100, 116, 139, 0.13);
+  --accent-ring: rgba(71, 85, 105, 0.3);
+  --grad: linear-gradient(135deg, #64748b 0%, #334155 100%);
+  --grad-brand: linear-gradient(135deg, #64748b, #1e293b);
+  --glow-a: rgba(148, 163, 184, 0.16);
+  --glow-b: rgba(100, 116, 139, 0.06);
+}
+
 /* Things that were drawn in fixed violet / cyan now follow the theme. */
 .shop.loading .dot {
   background: var(--accent);
@@ -1662,7 +1798,8 @@ table.prices tr.best td:last-child {
   top: 50px;
   right: 12px;
   z-index: 25;
-  width: 236px;
+  width: 300px;
+  max-width: calc(100vw - 24px);
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 16px;
@@ -1690,7 +1827,7 @@ table.prices tr.best td:last-child {
 
 .pp-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 6px;
 }
 

@@ -14,7 +14,8 @@ export const DEFAULTS = {
   maxSteps: 15,
   presenter: false,
   theme: "light", // "light" | "dark"
-  // Light colour theme: "ocean" | "lavender" | "mint" | "sunset" | "rose".
+  // Light colour theme: ocean (default), teal, mint, forest, indigo, lavender,
+  // berry, rose, coral, sunset, amber, sand or slate.
   palette: "ocean",
   // "guided" pauses briefly after every stage so people can follow along;
   // "fast" runs at full speed.
@@ -51,14 +52,14 @@ export const DEFAULTS = {
 };
 
 export async function loadSettings() {
-  const stored = await chrome.storage.local.get([...Object.keys(DEFAULTS), "privacyV2", "modesV3", "vaultGeminiV1", "lookV2"]);
-  // One-time move to the light colour themes (the panel used to follow the OS into dark).
-  if (!stored.lookV2) {
+  const stored = await chrome.storage.local.get([...Object.keys(DEFAULTS), "privacyV2", "modesV3", "vaultGeminiV1", "lookV3"]);
+  // One-time move to the light Ocean theme (the panel used to follow the OS into dark).
+  if (!stored.lookV3) {
     stored.theme = "light";
-    stored.palette ||= "ocean";
-    await chrome.storage.local.set({ theme: "light", palette: stored.palette, lookV2: true });
+    stored.palette = "ocean";
+    await chrome.storage.local.set({ theme: "light", palette: "ocean", lookV3: true });
   }
-  delete stored.lookV2;
+  delete stored.lookV3;
   // One-time move to the on-device detector: earlier builds defaulted to the
   // cloud detector, which sends the raw frame before redaction.
   if (!stored.privacyV2) {

@@ -64,8 +64,8 @@ Stellar card in `chrome://extensions`. Settings and the vault are kept.
 - **After a summary**: *Ask about this page* — follow-up questions answered from the same tagged text, with the
   same leak check; the privacy report updates.
 - **Settings** save as you change them, with section tabs at the top to jump around.
-- **Colours**: the palette button in the header picks a light colour theme — Ocean (default), Lavender, Mint,
-  Sunset or Rose — or Dark. The panel no longer switches to dark on its own when the computer is in dark mode.
+- **Colours**: the palette button in the header picks a light colour theme — Ocean (default), Teal, Mint,
+  Forest, Indigo, Lavender, Berry, Rose, Coral, Sunset, Amber, Sand or Slate — or Dark. The panel no longer switches to dark on its own when the computer is in dark mode.
 
 **Privacy report** — every finished task ends with a short report in plain words, e.g.
 *“Hid 3 emails, 1 password and 2 names. Sent 0 private items to the cloud.”* It counts each private item that

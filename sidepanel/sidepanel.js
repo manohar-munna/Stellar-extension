@@ -1329,10 +1329,18 @@ popoutBtn.addEventListener("click", () => {
 // Colours: light themes (Ocean by default) or Dark, from the palette button.
 const PALETTES = [
   { id: "ocean", name: "Ocean", dot: "linear-gradient(135deg, #0ea5e9, #2563eb)" },
-  { id: "lavender", name: "Lavender", dot: "linear-gradient(135deg, #8b5cf6, #6366f1)" },
+  { id: "teal", name: "Teal", dot: "linear-gradient(135deg, #14b8a6, #0891b2)" },
   { id: "mint", name: "Mint", dot: "linear-gradient(135deg, #10b981, #0d9488)" },
-  { id: "sunset", name: "Sunset", dot: "linear-gradient(135deg, #f97316, #e11d48)" },
+  { id: "forest", name: "Forest", dot: "linear-gradient(135deg, #22c55e, #15803d)" },
+  { id: "indigo", name: "Indigo", dot: "linear-gradient(135deg, #6366f1, #3b82f6)" },
+  { id: "lavender", name: "Lavender", dot: "linear-gradient(135deg, #8b5cf6, #6366f1)" },
+  { id: "berry", name: "Berry", dot: "linear-gradient(135deg, #c026d3, #7c3aed)" },
   { id: "rose", name: "Rose", dot: "linear-gradient(135deg, #ec4899, #8b5cf6)" },
+  { id: "coral", name: "Coral", dot: "linear-gradient(135deg, #fb7185, #f97316)" },
+  { id: "sunset", name: "Sunset", dot: "linear-gradient(135deg, #f97316, #e11d48)" },
+  { id: "amber", name: "Amber", dot: "linear-gradient(135deg, #f59e0b, #ea580c)" },
+  { id: "sand", name: "Sand", dot: "linear-gradient(135deg, #c08a4f, #8b5a2b)" },
+  { id: "slate", name: "Slate", dot: "linear-gradient(135deg, #64748b, #334155)" },
   { id: "dark", name: "Dark", dot: "linear-gradient(135deg, #252935, #0b0c10)" },
 ];
 const themeBtn = $("#themeBtn");
