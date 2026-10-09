@@ -49,6 +49,7 @@
       .check { display: flex; gap: 8px; align-items: center; font-weight: 500; }
       button { margin-top: 12px; padding: 9px 16px; border: 0; border-radius: 8px; background: var(--brand); color: #fff; font-weight: 600; cursor: pointer; font: inherit; font-weight: 600; }
       button.secondary { background: var(--brand-soft); color: var(--brand); }
+      .upload-btn { display: inline-block; margin: 0; padding: 8px 14px; border-radius: 8px; background: var(--brand-soft); color: var(--brand); font-weight: 600; cursor: pointer; }
       button.danger { background: #fde4e1; color: var(--bad); }
       .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
       .two { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
@@ -328,6 +329,12 @@
                 </select>
               </div>
             </div>
+            <label>Résumé</label>
+            <div class="row">
+              <label for="acv" class="upload-btn">📎 Upload résumé</label>
+              <span id="acvName" class="note">No file chosen (.pdf, .docx)</span>
+              <input id="acv" name="resume" type="file" accept=".pdf,.doc,.docx" hidden />
+            </div>
             <label for="acover">Why do you want to join?</label>
             <textarea id="acover" name="why" rows="3"></textarea>
             <label class="check"><input id="aconsent" name="consent" type="checkbox" /> I confirm these details are correct</label>
@@ -450,7 +457,7 @@ PINCODE=560025</pre>
         <div class="task"><div><span class="tag t-local">ON-DEVICE</span><code id="t2">Switch my plan to Basic.</code><small>On <a href="#/billing">Billing</a>. Dropdown + submit, no redaction needed.</small></div><button class="secondary" data-copy="t2">Copy</button></div>
 
         <h3>3 · Missing details — Stellar asks, then saves to the vault</h3>
-        <div class="task"><div><span class="tag t-you">YOU</span><code id="t3">Apply for the Data Engineer role using my vault details, saying I love building data pipelines, tick the confirmation and submit it.</code><small>On <a href="#/careers">Careers</a>. Phone * is required and not in the vault → Stellar asks once, saves PHONE, types [VAULT_PHONE].</small></div><button class="secondary" data-copy="t3">Copy</button></div>
+        <div class="task"><div><span class="tag t-you">YOU</span><code id="t3">Apply for the Data Engineer role using my vault details and my résumé, saying I love building data pipelines, tick the confirmation and submit it.</code><small>On <a href="#/careers">Careers</a>. Phone * is required and not in the vault → Stellar asks once, saves PHONE, types [VAULT_PHONE]. Store <a href="samples/resume.docx" download>the sample résumé</a> first (Settings → Private vault → Both) and it is attached as [FILE_RESUME].</small></div><button class="secondary" data-copy="t3">Copy</button></div>
 
         <h3>4 · Complex tasks — Gemini reasons on redacted frames</h3>
         <div class="task"><div><span class="tag t-cloud">CLOUD</span><code id="t4">Which of my orders is still pending, and what is its total?</code><small>On <a href="#/orders">Orders</a>. Reading a table and answering needs reasoning.</small></div><button class="secondary" data-copy="t4">Copy</button></div>
@@ -511,6 +518,10 @@ PINCODE=560025</pre>
         otp: () => "Device verified.",
         newsletter: () => "Subscribed! See you next month.",
       };
+      document.getElementById("acv").addEventListener("change", (e) => {
+        const f = e.target.files[0];
+        document.getElementById("acvName").textContent = f ? `✓ ${f.name}` : "No file chosen (.pdf, .docx)";
+      });
       document.querySelectorAll("form[data-form]").forEach((f) =>
         f.addEventListener("submit", (e) => {
           e.preventDefault();
@@ -519,7 +530,11 @@ PINCODE=560025</pre>
           const data = Object.fromEntries(new FormData(f));
           delete data["cf-turnstile-response"];
           if (f.dataset.form === "change-plan") data.plan = document.getElementById("plan").value;
-          if (f.dataset.form === "application") data.consent = document.getElementById("aconsent").checked;
+          if (f.dataset.form === "application") {
+            data.consent = document.getElementById("aconsent").checked;
+            const cv = document.getElementById("acv").files[0];
+            data.resume = cv ? `${cv.name} (${Math.round(cv.size / 1024)} KB)` : "none";
+          }
           const msg = (MSG[f.dataset.form] || (() => "Saved."))(data);
           const done = f.querySelector(".done");
           if (done) {

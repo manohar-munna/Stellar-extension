@@ -27,11 +27,12 @@ export class RealInput {
     this.tabId = null;
     this.attached = false;
     this.lost = false; // the user cancelled the debugger bar: stop using it this run
-    this.onDetach = (source) => {
-      if (source.tabId === this.tabId) {
-        this.attached = false;
-        this.lost = true;
-      }
+    this.onDetach = (source, reason) => {
+      if (source.tabId !== this.tabId) return;
+      this.attached = false;
+      // Only the user dismissing Chrome's debugging bar turns real input off;
+      // a closed pop-up or tab just means attaching again to the next one.
+      if (reason === "canceled_by_user") this.lost = true;
     };
   }
 

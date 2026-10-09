@@ -17,7 +17,7 @@ const HIGH_RISK_TAG = /^(PASSWORD|API_KEY|OTP|CVV|CARD|ACCOUNT|GOV_ID)_\d+$/;
  * @returns {{ verdict: "allow"|"confirm"|"block", checks: Array<{ok:boolean, level:string, label:string}>,
  *             action: object, displayText?: string, reason: string }}
  */
-export async function validateAction(proposed, { inspect, elements, secrets, settings, history }) {
+export async function validateAction(proposed, { inspect, elements, secrets, settings, history, vaultFiles = [] }) {
   const checks = [];
   const pass = (label) => checks.push({ ok: true, level: "pass", label });
   const warn = (label) => checks.push({ ok: true, level: "warn", label });
@@ -48,7 +48,7 @@ export async function validateAction(proposed, { inspect, elements, secrets, set
     return finish();
   }
 
-  if (["click", "type", "select"].includes(action.type)) {
+  if (["click", "type", "select", "upload"].includes(action.type)) {
     if (!action.target) {
       block("No target element given");
       return finish();
@@ -79,6 +79,27 @@ export async function validateAction(proposed, { inspect, elements, secrets, set
       return finish();
     }
     pass("Element is visible and enabled");
+
+    if (action.type === "click" && (known.kind === "UPLOAD" || info.isUpload)) {
+      block(`${action.target} is a file-upload field — clicking it opens the computer's file picker; use the upload action with a [FILE_…] tag instead`);
+      return finish();
+    }
+    if (action.type === "upload") {
+      if (!(known.kind === "UPLOAD" || info.isUpload)) {
+        block(`${action.target} is not a file-upload field`);
+        return finish();
+      }
+      const key = String(action.file || "").replace(/^\[?FILE_/, "").replace(/\]$/, "");
+      const file = vaultFiles.find((f) => f.key === key);
+      if (!file) {
+        block(`No stored file [FILE_${key || "?"}] in the private vault${vaultFiles.length ? ` (have: ${vaultFiles.map((f) => `[FILE_${f.key}]`).join(", ")})` : " — add one in Settings → Private vault"}`);
+        return finish();
+      }
+      action.file = key;
+      displayText = `[FILE_${key}]`;
+      pass(`[FILE_${key}] is ${file.name} — sent from this device straight to the page, never to the AI`);
+      if (settings.askRisky) confirm(`Upload your file "${file.name}" to this website?`);
+    }
 
     if (action.type === "type") {
       if (!info.editable) {

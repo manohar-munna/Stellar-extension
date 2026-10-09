@@ -37,6 +37,9 @@ export const DEFAULTS = {
   localUnloadMinutes: 10,
   // Vault import: "local" (on-device) or "gemini" (uploads the document).
   vaultExtract: "local",
+  // Adding a file to the vault: "extract" details, "store" the file for
+  // upload fields, or "both".
+  vaultFileMode: "both",
   vault: "",
 };
 

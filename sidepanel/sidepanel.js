@@ -7,6 +7,7 @@ import { listModels } from "./gemini.js";
 import { CATEGORY_COLORS } from "./privacy.js";
 import { loadLocalModel, onLocalState, isLocalModelCached, localState, LOCAL_MODEL, configureAutoUnload } from "./local/vlm.js";
 import { extractFromFile, mergeIntoVault, VAULT_FIELDS } from "./vault-import.js";
+import { listFiles, putFile, deleteFile, renameFile, guessFileKey, prettySize, fileTag } from "./vault-files.js";
 import { VOICE_LANGS, Listener, speak, stopSpeaking, voiceSupported, identifyLanguage, languageName, fullTag } from "./voice.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -493,6 +494,7 @@ function savedCopy(run) {
   const clone = run.el.cloneNode(true);
   clone.classList.remove("sel");
   clone.querySelectorAll("img.shot.raw").forEach((img) => img.replaceWith(h("div", { class: "note" }, "Unredacted capture — shown live only, never saved to disk.")));
+  clone.querySelectorAll(":scope > .followup").forEach((n) => n.remove());
   return {
     id: run.id,
     title: run.title,
@@ -501,6 +503,10 @@ function savedCopy(run) {
     status: run.status,
     html: clone.innerHTML,
     log: run.log,
+    // Kept so "Continue" works after the panel is reopened (step summaries only, tags not values).
+    agentHistory: (run.agentHistory || []).map(({ text, sig }) => ({ text, sig })),
+    finalMessage: run.finalMessage || "",
+    lang: run.lang || "",
     savedAt: Date.now(),
   };
 }
@@ -550,7 +556,11 @@ async function restoreRuns() {
       el.querySelectorAll(".card.pending").forEach((n) => n.remove());
       el.append(h("div", { class: "final bad" }, h("span", { class: "lbl" }, "Stopped"), "The side panel was closed while this task was running. Run it again to continue."));
     }
-    const run = { id: s.id, title: s.title, task: s.task, snapshot: s.snapshot, status, restored: true, steps: [], el, log: s.log || {}, statsEl: el.querySelector(".run-stats"), stats: { tags: new Set(), bytes: 0, leaks: 0 } };
+    const run = {
+      id: s.id, title: s.title, task: s.task, snapshot: s.snapshot, status, restored: true, steps: [], el,
+      log: s.log || {}, statsEl: el.querySelector(".run-stats"), stats: { tags: new Set(), bytes: 0, leaks: 0 },
+      agentHistory: s.agentHistory || [], finalMessage: s.finalMessage || (status === "stopped" ? "The side panel was closed while this task was running." : ""), lang: s.lang || "",
+    };
     // Restored cards are plain HTML, so their clicks are handled here.
     el.addEventListener("click", (e) => {
       const seg = e.target.closest(".seg");
@@ -570,6 +580,7 @@ async function restoreRuns() {
     });
     feed.append(el);
     addRunTab(run);
+    if (!run.snapshot) addFollowUp(run);
     watchRun(run);
   }
   let pick = null;
@@ -738,15 +749,28 @@ function removePlaceholders(run) {
 // ---------------------------------------------------------------------- ui
 
 const ui = {
-  runStarted({ task, snapshot, settings, maxSteps, lang, spoken }) {
+  runStarted({ task, snapshot, settings, maxSteps, lang, spoken, history, continueRun }) {
     $("#intro")?.remove();
-    activeRun = makeRun({ task, snapshot, settings, maxSteps });
+    let stepBase = 0;
+    if (continueRun && runs.includes(continueRun)) {
+      // A follow-up continues in the same task card, below the last result.
+      activeRun = continueRun;
+      stepBase = Math.max(activeRun.steps.length, activeRun.el.querySelectorAll(".step").length);
+      activeRun.el.querySelector(":scope > .followup")?.remove();
+      activeRun.log.steps ||= [];
+      activeRun.el.append(h("div", { class: "followup-h" }, h("span", { class: "lbl" }, "Follow-up"), task));
+      setRunStatus(activeRun, "running");
+    } else {
+      activeRun = makeRun({ task, snapshot, settings, maxSteps });
+    }
+    activeRun.agentHistory = history;
     activeRun.lang = lang;
     activeRun.spoken = spoken && settings.speakReplies !== false;
     selectRun(activeRun);
     setFollow(true);
     setRunning(true);
     this.status(snapshot ? "Taking a privacy snapshot…" : "Starting…");
+    return { stepBase };
   },
 
   note(text) {
@@ -1045,6 +1069,8 @@ const ui = {
     if (last) summarizeStep(run, last, { collapse: false });
     run.el.append(h("div", { class: `final${ok ? "" : " bad"}` }, h("span", { class: "lbl" }, ok ? "Result" : "Stopped"), message));
     run.log.result = { ok, message, finishedAt: new Date().toISOString() };
+    run.finalMessage = message;
+    if (!run.snapshot) addFollowUp(run);
     if (run.spoken) speak(message, run.lang);
     activeRun = null;
     setRunStatus(run, ok ? "done" : "stopped");
@@ -1074,10 +1100,43 @@ function start(mode) {
     taskInput.focus();
     return;
   }
-  // Answer in the language of the task: the spoken language, or (typed) identified on-device.
   const spokenNow = voiceState.text && voiceState.text === task;
-  const langP = spokenNow ? Promise.resolve(voiceState.lang) : mode === "agent" ? identifyLanguage(task).then((b) => (b ? fullTag(b) : "")) : Promise.resolve("");
-  langP.then((lang) => agent.run({ task, mode, lang, spoken: !!spokenNow }).catch((e) => ui.finish({ ok: false, message: e.message || String(e) })));
+  startRun({ task, mode, spoken: !!spokenNow, lang: spokenNow ? voiceState.lang : null });
+}
+
+/** Start a run — or, with continueRun, a follow-up in that task's conversation. */
+function startRun({ task, mode = "agent", spoken = false, lang = null, continueRun = null }) {
+  if (agent.running) return ui.status("Wait for the current task to finish (or press Stop).");
+  // Answer in the language of the task: the spoken language, or (typed) identified on-device.
+  const langP = lang != null ? Promise.resolve(lang) : mode === "agent" ? identifyLanguage(task).then((b) => (b ? fullTag(b) : "")) : Promise.resolve("");
+  langP.then((l) => agent.run({ task, mode, lang: l, spoken, continueRun }).catch((e) => ui.finish({ ok: false, message: e.message || String(e) })));
+}
+
+/** "Continue this task" box under a finished task. */
+function addFollowUp(run) {
+  run.el.querySelector(":scope > .followup")?.remove();
+  const input = h("textarea", { class: "input", rows: 1, placeholder: "Continue this task — e.g. “now upload my résumé too” or “use the other account”…" });
+  const form = h(
+    "form",
+    {
+      class: "followup",
+      onsubmit: (e) => {
+        e.preventDefault();
+        const text = input.value.trim();
+        if (!text) return input.focus();
+        startRun({ task: text, continueRun: run });
+      },
+    },
+    input,
+    h("button", { class: "btn primary sm", type: "submit" }, "Continue")
+  );
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      form.requestSubmit();
+    }
+  });
+  run.el.append(form);
 }
 
 // ------------------------------------------------------------------ voice
@@ -1240,6 +1299,8 @@ async function openSettings() {
   (document.querySelector(`input[name=localUnload][value="${s.localUnloadMinutes ?? 10}"]`) || document.querySelector("input[name=localUnload][value='10']")).checked = true;
   $("#vaultGemini").checked = s.vaultExtract === "gemini";
   $("#vaultReview").replaceChildren();
+  (document.querySelector(`input[name=vaultFileMode][value=${s.vaultFileMode || "both"}]`) || document.querySelector("input[name=vaultFileMode][value=both]")).checked = true;
+  renderVaultFiles();
   $("#maxSteps").value = s.maxSteps;
   $("#vault").value = s.vault;
   $("#saveStatus").textContent = "";
@@ -1336,22 +1397,47 @@ localChip.addEventListener("click", openSettings);
 // ------------------------------------------------------------ vault import
 
 $("#vaultImportBtn").addEventListener("click", () => $("#vaultFile").click());
+document.querySelectorAll("input[name=vaultFileMode]").forEach((r) => r.addEventListener("change", () => saveSettings({ vaultFileMode: r.value })));
+
+const EXTRACTABLE = /^image\/|pdf$|\.(pdf|docx|txt|csv|json|vcf)$/i;
+
 $("#vaultFile").addEventListener("change", async (e) => {
   const files = [...e.target.files];
   e.target.value = "";
   if (!files.length) return;
   const review = $("#vaultReview");
+  const mode = document.querySelector("input[name=vaultFileMode]:checked")?.value || "both";
+  const store = mode !== "extract";
+  const extract = mode !== "store";
   const useGemini = $("#vaultGemini").checked;
   const s = await loadSettings();
+  const notes = [];
+  if (store) {
+    const taken = (await listFiles()).map((f) => f.key);
+    for (const f of files) {
+      const key = guessFileKey(f, taken);
+      taken.push(key);
+      try {
+        await putFile(key, f);
+        notes.push(`${f.name}: stored on this device as ${fileTag(key)} for upload fields.`);
+      } catch (err) {
+        notes.push(`${f.name}: couldn't store — ${err.message}`);
+      }
+    }
+    renderVaultFiles();
+  }
+  if (!extract) return review.replaceChildren(h("div", { class: "vr" }, ...notes.map((n) => h("div", { class: "note" }, n))));
   if (useGemini && !s.apiKey && !$("#apiKey").value.trim()) {
     review.replaceChildren(h("div", { class: "note warn" }, "Add a Gemini API key first, or untick Gemini extraction."));
     return;
   }
-  const status = h("div", { class: "watch" }, h("span", { class: "spinner" }), `Reading ${files.length} file${files.length > 1 ? "s" : ""} ${useGemini ? "with Gemini" : "on this device"}…`);
+  const readable = files.filter((f) => EXTRACTABLE.test(f.type) || EXTRACTABLE.test(f.name));
+  for (const f of files) if (!readable.includes(f)) notes.push(`${f.name}: no details to read from this file type.`);
+  if (!readable.length) return renderVaultReview([], notes);
+  const status = h("div", { class: "watch" }, h("span", { class: "spinner" }), `Reading ${readable.length} file${readable.length > 1 ? "s" : ""} ${useGemini ? "with Gemini" : "on this device"}…`);
   review.replaceChildren(status);
   const found = [];
-  const notes = [];
-  for (const f of files) {
+  for (const f of readable) {
     try {
       const r = await extractFromFile(f, { mode: useGemini ? "gemini" : "local", apiKey: $("#apiKey").value.trim() || s.apiKey, model: s.detectModel });
       found.push(...r.fields);
@@ -1362,6 +1448,35 @@ $("#vaultFile").addEventListener("change", async (e) => {
   }
   renderVaultReview(found, notes);
 });
+
+/** Stored files list: rename the tag, or remove the file. */
+async function renderVaultFiles() {
+  const box = $("#vaultFiles");
+  const files = await listFiles();
+  if (!files.length) {
+    box.replaceChildren(h("p", { class: "set-hint" }, "None yet. Add your résumé with “Store the file” or “Both” — Stellar attaches it when a site asks for an upload."));
+    return;
+  }
+  box.replaceChildren(
+    ...files.map((f) => {
+      const icon = /pdf/.test(f.type) ? "📄" : /^image\//.test(f.type) ? "🖼️" : /word|docx/.test(f.type + f.name) ? "📝" : "📎";
+      const key = h("input", { class: "vf-key", value: f.key, title: "The AI sees this file as [FILE_<this>]", spellcheck: "false" });
+      key.addEventListener("change", async () => {
+        const next = key.value.toUpperCase().replace(/[^A-Z0-9_]+/g, "_").replace(/^_|_$/g, "") || f.key;
+        if (next !== f.key && !(await listFiles()).some((o) => o.key === next)) await renameFile(f.key, next);
+        renderVaultFiles();
+      });
+      return h(
+        "div",
+        { class: "vf-row" },
+        h("span", { class: "vf-icon" }, icon),
+        h("div", { class: "vf-name", title: f.name }, f.name, h("small", {}, `${prettySize(f.size)} · AI sees ${fileTag(f.key)}`)),
+        key,
+        h("button", { class: "vf-del", type: "button", title: "Remove from this device", onclick: async () => { await deleteFile(f.key); renderVaultFiles(); } }, "×")
+      );
+    })
+  );
+}
 
 function renderVaultReview(fields, notes) {
   const review = $("#vaultReview");

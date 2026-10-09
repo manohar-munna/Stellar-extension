@@ -96,6 +96,7 @@
     if (tag === "input") {
       const t = (el.type || "text").toLowerCase();
       if (t === "checkbox") return "CHECKBOX";
+      if (t === "file") return "UPLOAD";
       if (t === "radio") return "RADIO";
       if (["submit", "button", "reset", "image"].includes(t)) return "BUTTON";
       return "INPUT";
@@ -162,6 +163,14 @@
     return /pass(word)?|pwd|otp|cvv|cvc|card.?num|iban|ssn|aadhaar|aadhar|secret|token|api.?key|\bpin\b/.test(hint);
   }
 
+  function uploadName(el) {
+    const own = nameOf(el);
+    const standIn = uploadStandIn.get(el);
+    const near = standIn && standIn !== el ? collapse(standIn.innerText || standIn.textContent || "") : "";
+    const label = [own && !/^(file|upload|input)$/i.test(own) ? own : "", near].filter(Boolean).join(" — ") || "File upload";
+    return clip(`${label}${el.accept ? ` (accepts ${el.accept})` : ""}`);
+  }
+
   // Code editors keep their real input in a hidden 1-px textarea (Monaco) or a
   // contenteditable deep inside (CodeMirror 6), so they are tagged as one
   // INPUT on the visible editor box instead.
@@ -178,6 +187,24 @@
     return `Code editor (${editorKind(el)})${preview ? ` — starts "${preview}"` : ""}`;
   }
 
+  const uploadStandIn = new WeakMap();
+  /** The visible element standing in for a (possibly hidden) file input. */
+  function uploadProxy(input) {
+    const visible = (n) => {
+      if (!n) return false;
+      const r = n.getBoundingClientRect();
+      return r.width >= 4 && r.height >= 4 && isRendered(n);
+    };
+    if (visible(input)) return input;
+    const options = [...(input.labels || []), input.closest("label"), input.id && document.querySelector(`[for="${CSS.escape(input.id)}"]`)];
+    // A nearby button/drop area in the same wrapper (up to three levels).
+    for (let p = input.parentElement, i = 0; p && i < 3; p = p.parentElement, i++) {
+      options.push(p.querySelector("button, [role=button], label, [class*=upload i], [class*=drop i]"));
+      options.push(p);
+    }
+    return options.find((n) => n && n !== document.body && visible(n) && n.getBoundingClientRect().height < 400) || null;
+  }
+
   function scanElements() {
     const candidates = [];
     const seen = new Set();
@@ -186,6 +213,17 @@
       const r = el.getBoundingClientRect();
       if (r.width < 40 || r.height < 20 || !intersectsViewport(r) || !isRendered(el)) continue;
       seen.add(el);
+      candidates.push({ el, r });
+    }
+    // File inputs are usually invisible behind a styled "Upload" label or
+    // button; tag the input itself, placed where its visible stand-in is.
+    for (const el of document.querySelectorAll("input[type=file]")) {
+      seen.add(el);
+      const proxy = uploadProxy(el);
+      if (!proxy) continue;
+      const r = proxy.getBoundingClientRect();
+      if (r.width < 4 || r.height < 4 || !intersectsViewport(r)) continue;
+      uploadStandIn.set(el, proxy);
       candidates.push({ el, r });
     }
     for (const el of document.querySelectorAll(INTERACTIVE_SELECTOR)) {
@@ -230,7 +268,7 @@
       const info = {
         tag,
         kind,
-        name: editor ? editorName(el) : nameOf(el),
+        name: editor ? editorName(el) : kind === "UPLOAD" ? uploadName(el) : nameOf(el),
         rect: rectOf(r),
         disabled: !!(el.disabled || el.getAttribute("aria-disabled") === "true"),
         sensitive: isSensitiveField(el),
@@ -240,6 +278,11 @@
       if (autofillHidden(el)) {
         info.filled = true;
         info.autofilled = true;
+      }
+      if (kind === "UPLOAD") {
+        info.accept = el.accept || "";
+        info.filled = el.files?.length > 0;
+        if (info.filled) info.fileName = el.files[0].name;
       }
       if (editor) {
         info.editor = editor;
@@ -699,7 +742,8 @@
     return {
       exists: true,
       connected: el.isConnected,
-      visible: el.isConnected && r.width > 0 && r.height > 0 && isRendered(el),
+      // A hidden file input counts as visible through its stand-in label/button.
+      visible: el.isConnected && ((r.width > 0 && r.height > 0 && isRendered(el)) || !!uploadStandIn.get(el)),
       disabled: !!(el.disabled || el.getAttribute("aria-disabled") === "true"),
       kind: kindOf(el),
       name: nameOf(el),
@@ -710,6 +754,7 @@
         el.isContentEditable ||
         !!editorKind(el),
       editor: editorKind(el),
+      isUpload: el instanceof HTMLInputElement && el.type === "file",
       isSelect: el instanceof HTMLSelectElement,
       inChallenge: !!el.closest(challengeElSelector()),
     };
@@ -751,6 +796,31 @@
       }
     }
     return { ok: false, reason: `${tag} is covered by another element` };
+  }
+
+  /** Attach a file from the private vault to a file input (or drop it on a drop zone). */
+  function uploadTo(tag, f) {
+    const el = elementMap.get(tag);
+    if (!el || !el.isConnected) return { ok: false, detail: `element ${tag} is no longer on the page` };
+    if (el.closest(challengeElSelector())) return { ok: false, detail: "that is part of a CAPTCHA / bot check" };
+    const bytes = Uint8Array.from(atob(f.b64), (c) => c.charCodeAt(0));
+    const file = new File([bytes], f.name, { type: f.type || "application/octet-stream", lastModified: Date.now() });
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    const input = el instanceof HTMLInputElement && el.type === "file" ? el : el.querySelector?.("input[type=file]");
+    if (input) {
+      input.files = dt.files;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      const ok = input.files.length > 0 && input.files[0].name === f.name;
+      const accept = (input.accept || "").toLowerCase();
+      const ext = "." + f.name.split(".").pop().toLowerCase();
+      const mismatch = accept && !accept.split(",").some((a) => (a = a.trim()) && (a === ext || a === f.type || (a.endsWith("/*") && f.type.startsWith(a.slice(0, -1)))));
+      return { ok, detail: ok ? `attached ${f.name}${mismatch ? ` (note: the field accepts ${input.accept})` : ""}` : "the page refused the file" };
+    }
+    const target = uploadStandIn.get(el) || el;
+    for (const type of ["dragenter", "dragover", "drop"]) target.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+    return { ok: true, detail: `dropped ${f.name} onto ${tag}` };
   }
 
   /** What the target holds now — to confirm real typing/selection worked. */
@@ -877,6 +947,8 @@
         return pointFor(cmd.tag);
       case "readback":
         return readback(cmd.tag);
+      case "upload":
+        return uploadTo(cmd.tag, cmd.file);
       case "paste": {
         // Paste into the focused editor: editors insert pasted text verbatim
         // (no auto-indent or auto-closing brackets, unlike typed text).

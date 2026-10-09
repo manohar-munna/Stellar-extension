@@ -13,6 +13,7 @@ import { LOCAL_MODEL, holdLocalModel, loadLocalModel, isLocalModelCached, localS
 import { detectFaces } from "./local/faces.js";
 import { RealInput } from "./real-input.js";
 import { baseOf, languageName } from "./voice.js";
+import { listFiles, fileForUpload } from "./vault-files.js";
 
 const NEW_TAB_URL = /^(chrome:\/\/(newtab|new-tab-page)|chrome-search:\/\/|about:blank|edge:\/\/newtab)/;
 
@@ -38,6 +39,8 @@ export function describeAction(a, displayText) {
       const shown = lines > 1 || t.length > 90 ? `${t.split("\n")[0].slice(0, 60)}… (${lines} lines, ${t.length} chars)` : t;
       return `type "${shown}" into [${a.target}]${a.submit ? " + Enter" : ""}`;
     }
+    case "upload":
+      return `upload [FILE_${String(a.file || "").replace(/^\[?FILE_|\]$/g, "")}] to [${a.target}]`;
     case "select":
       return `select "${a.text}" in [${a.target}]`;
     case "scroll":
@@ -190,6 +193,11 @@ export class StellarAgent {
    */
   async perform(tabId, a) {
     const dom = async (action = a) => (await this.cs(tabId, { op: "execute", action })) || { ok: false, detail: "no response from page" };
+    if (a.type === "upload") {
+      const file = await fileForUpload(a.file);
+      if (!file) return { ok: false, detail: `[FILE_${a.file}] is no longer in the vault` };
+      return (await this.cs(tabId, { op: "upload", tag: a.target, file })) || { ok: false, detail: "no response from page" };
+    }
     if (a.type === "type" && (await this.cs(tabId, { op: "inspect", tag: a.target }))?.editor) return this.typeIntoEditor(tabId, a);
     if (this.settings.realClick === false || !this.real.available || !["click", "type", "select", "press_key"].includes(a.type)) return dom();
 
@@ -279,7 +287,7 @@ export class StellarAgent {
 
   // ------------------------------------------------------------------ run
 
-  async run({ task, mode, lang = "", spoken = false }) {
+  async run({ task, mode, lang = "", spoken = false, continueRun = null }) {
     this.settings = await loadSettings();
     this.stopped = false;
     this.running = true;
@@ -296,7 +304,9 @@ export class StellarAgent {
     settings.askRisky = !settings.autopilot;
 
     const vault = parseVault(settings.vault);
-    const history = [];
+    // A follow-up continues the same conversation: same run card, its history kept.
+    const history = continueRun?.agentHistory || [];
+    const vaultFiles = await listFiles();
     const maxSteps = snapshot ? 1 : Math.max(1, Math.min(50, Number(settings.maxSteps) || 15));
     let consecutiveBlocks = 0;
     const dismissedChecks = new Set(); // check kinds the user waved through this run
@@ -304,7 +314,13 @@ export class StellarAgent {
     const autofillTried = new Set(); // pages where the real-click unlock was tried
     let tabId = null;
 
-    ui.runStarted({ task, snapshot, settings, maxSteps, lang, spoken });
+    const { stepBase = 0 } = ui.runStarted({ task, snapshot, settings, maxSteps, lang, spoken, history, continueRun }) || {};
+    if (continueRun) {
+      history.push({
+        text: `The user follows up in the same conversation. Earlier task: "${continueRun.task}". Earlier result: "${continueRun.finalMessage || "—"}". The TASK below is the follow-up; build on what was already done.`,
+        sig: "followup",
+      });
+    }
     const foreign = !!lang && baseOf(lang) !== "en";
     // Never auto-unload the on-device model in the middle of a run.
     const holdModel = settings.localBackup !== "off" && !snapshot;
@@ -362,11 +378,27 @@ export class StellarAgent {
         );
       }
       tabId = tab.id;
-      const windowId = tab.windowId;
+      let windowId = tab.windowId;
+      // Tabs and pop-ups the run followed (e.g. a "Sign in with Google" window);
+      // when one closes itself, the run carries on in the tab that opened it.
+      const tabTrail = [];
 
-      for (let step = 1; step <= maxSteps; step++) {
+      for (let step = stepBase + 1; step <= stepBase + maxSteps; step++) {
         this.checkStop();
         const S = ui.beginStep(step);
+
+        let current = await chrome.tabs.get(tabId).catch(() => null);
+        if (!current) {
+          while (!current && tabTrail.length) {
+            tabId = tabTrail.pop();
+            current = await chrome.tabs.get(tabId).catch(() => null);
+          }
+          if (!current) throw new Error("The tab Stellar was working in was closed.");
+          ui.note("The pop-up or tab Stellar was following closed itself (normal after signing in) — continuing in the page that opened it.");
+          history.push({ text: `Step ${step}: the pop-up/tab from the previous step closed by itself; back on the page that opened it (${current.url?.split("?")[0] || "previous tab"}).`, sig: "tab-closed" });
+          await this.settle(tabId);
+        }
+        windowId = current.windowId;
 
         // ---------------------------------------------------------- 1 CAPTURE
         ui.setStage("capture");
@@ -459,7 +491,7 @@ export class StellarAgent {
           try {
             await loadLocalModel();
             const imageBlob = await (await fetch(labelledFrame.dataUrl)).blob();
-            const d = await localDecide({ task: localTask, elements: labelled, history, vault, imageBlob, mode: localFirst ? "first" : "backup" });
+            const d = await localDecide({ task: localTask, elements: labelled, history, vault, vaultFiles, imageBlob, mode: localFirst ? "first" : "backup" });
             if (d.confident) pick = d;
             else localWhy = d.reason;
           } catch (err) {
@@ -567,6 +599,7 @@ export class StellarAgent {
           page,
           regions,
           vaultTags: vault.map((v) => v.tag),
+          vaultFiles,
           elements,
           history: history.map((h) => scrubText(h.text, secrets)),
           userLang: foreign ? languageName(lang) : "",
@@ -615,7 +648,7 @@ export class StellarAgent {
           ui.status(`On-device ${LOCAL_MODEL.name} is choosing the next action…`);
           const imageBlob = await (await fetch(sanitized.dataUrl)).blob();
           try {
-            return await localDecide({ task: localTask, elements, history, vault, imageBlob });
+            return await localDecide({ task: localTask, elements, history, vault, vaultFiles, imageBlob });
           } catch (err) {
             throw new Error(`On-device model failed too: ${err.message}`);
           }
@@ -697,6 +730,7 @@ export class StellarAgent {
           secrets,
           settings,
           history,
+          vaultFiles,
         });
         // v.action has a normalised target; displayText keeps tags instead of
         // the locally-substituted values, so summaries never contain secrets.
@@ -746,17 +780,23 @@ export class StellarAgent {
             await sleep(1500);
             result = { ok: true, detail: "waited 1.5s" };
           } else {
-            result = await this.perform(tabId, a);
+            result = await this.perform(tabId, a).catch((e) => {
+              // A click that completes a sign-in often closes its own pop-up.
+              if (/No tab with id|tab was closed|Frame with ID|No frame/i.test(e.message || "")) return { ok: true, detail: "done — the window closed after this action" };
+              throw e;
+            });
           }
           await this.settle(tabId);
         } finally {
           chrome.tabs.onCreated.removeListener(onCreated);
         }
         if (newTab) {
+          tabTrail.push(tabId);
           tabId = newTab.id;
           await chrome.tabs.update(tabId, { active: true });
+          await chrome.windows.update(newTab.windowId, { focused: true }).catch(() => {});
           await this.settle(tabId);
-          result.detail += " (opened a new tab — following it)";
+          result.detail += " (opened a new tab or pop-up — following it)";
         }
         await ui.card(S, "execute", { ms: Math.round(performance.now() - t3), ...result, summary, userNote });
         history.push({ text: `Step ${step}: ${summary} → ${result.ok ? "ok" : "FAILED"}: ${result.detail}`, sig: v.sig });

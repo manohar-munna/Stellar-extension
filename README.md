@@ -64,6 +64,16 @@ Stellar card in `chrome://extensions`. Settings and the vault are kept.
   Arkose or Cloudflare “Just a moment…” check is on screen, the agent pauses *before* any model call, shows a
   **Human verification needed** card and an on-page message, and resumes by itself as soon as the check is
   cleared (or when you click *I’ve done it — continue*). Model actions that target a CAPTCHA widget are blocked.
+- **Continue a task**: every finished task ends with a *Continue this task* box. A follow-up runs in the same
+  task card with the earlier steps and result as context (“now upload my résumé too”), also after reopening the
+  panel.
+- **Files in the private vault**: Settings → Private vault → *Add file…* with a toggle — **Extract details**
+  (name, email… into the vault), **Store the file** (kept on this device for upload fields), or **Both** (best
+  for a résumé). Stored files appear to the AI only as tags like `[FILE_RESUME]`; Stellar detects upload fields
+  — also hidden ones behind a styled “Upload résumé” button — and attaches the file straight from this device
+  with the `upload` action (it never opens the computer's file picker). Safe mode asks before uploading.
+- **Pop-ups and new tabs**: Stellar follows a tab or “Sign in with Google” window a click opens, and when that
+  window closes itself after signing in it carries on in the page that opened it.
 - **Voice, any language**: press 🎤 in the task box and speak. Chrome's speech recognition types it live; the
   run starts 2 s later unless you click the box to edit. Chrome's recogniser writes everything in the
   language it listens in (Telugu comes out as Hindi if it listened in Hindi), so with *Auto* its text is only

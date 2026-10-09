@@ -1487,7 +1487,10 @@ pre {
 .set-card:has(input[name="localBackup"][value="always"]:checked) .opt[data-name="localBackup"][data-value="always"],
 .set-card:has(input[name="localBackup"][value="off"]:checked) .opt[data-name="localBackup"][data-value="off"],
 .set-card:has(input[name="pace"][value="guided"]:checked) .opt[data-name="pace"][data-value="guided"],
-.set-card:has(input[name="pace"][value="fast"]:checked) .opt[data-name="pace"][data-value="fast"] {
+.set-card:has(input[name="pace"][value="fast"]:checked) .opt[data-name="pace"][data-value="fast"],
+.set-card:has(input[name="vaultFileMode"][value="extract"]:checked) .opt[data-name="vaultFileMode"][data-value="extract"],
+.set-card:has(input[name="vaultFileMode"][value="store"]:checked) .opt[data-name="vaultFileMode"][data-value="store"],
+.set-card:has(input[name="vaultFileMode"][value="both"]:checked) .opt[data-name="vaultFileMode"][data-value="both"] {
   display: block;
 }
 
@@ -1863,4 +1866,97 @@ pre {
 
 @media (prefers-reduced-motion: reduce) {
   .mic[aria-pressed="true"] { animation: none; }
+}
+
+/* ------------------------------------------------------- vault: stored files */
+
+.vault-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vf-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.vf-icon {
+  font-size: 16px;
+}
+
+.vf-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.vf-name small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.vf-key {
+  width: 118px;
+  font: 12px ui-monospace, Consolas, monospace;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.vf-del {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.vf-del:hover {
+  color: #e5484d;
+}
+
+/* ------------------------------------------------------------ follow-up box */
+
+.followup {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  margin: 10px 0 4px;
+}
+
+.followup textarea {
+  flex: 1;
+  resize: vertical;
+  min-height: 38px;
+}
+
+.followup-h {
+  margin: 14px 0 6px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--violet);
+  border-radius: 6px;
+  background: rgba(124, 58, 237, 0.08);
+  font-size: 13px;
+}
+
+.followup-h .lbl {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--violet);
 }

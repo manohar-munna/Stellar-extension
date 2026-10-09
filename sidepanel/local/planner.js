@@ -6,7 +6,7 @@
 
 import { askLocal, LOCAL_MODEL } from "./vlm.js";
 
-const ELEMENT_TAG = /\[((?:INPUT|BUTTON|LINK|SELECT|CHECKBOX|RADIO|TAB|OPTION)_\d{2})\]/g;
+const ELEMENT_TAG = /\[((?:INPUT|BUTTON|LINK|SELECT|CHECKBOX|RADIO|TAB|OPTION|UPLOAD)_\d{2})\]/g;
 const SUBMIT = /\b(send|submit|save|continue|next|confirm|search|apply|go|sign in|log ?in|done|finish|register|create|change|update|subscribe|verify)\b/i;
 const DESTRUCTIVE = /\b(delete|remove|cancel|deactivate|sign out|log ?out|unsubscribe|rotate)\b/i;
 const STOP = new Set("the and for with from that this your into about then them they have will what when which using use please also just make sure".split(" "));
@@ -66,7 +66,22 @@ function describe(e) {
 }
 
 /** Rank candidate actions for this step; higher is more relevant. */
-export function rankCandidates({ task, elements, history, vaultTags }) {
+/** Which stored file an upload field wants (RESUME for "Upload CV", …). */
+function fileKeyFor(label, fileKeys) {
+  const l = String(label || "").toLowerCase();
+  const want =
+    /resume|résumé|\bcv\b|curriculum/.test(l) ? ["RESUME", "CV"] :
+    /cover/.test(l) ? ["COVER_LETTER"] :
+    /photo|picture|selfie|avatar|headshot/.test(l) ? ["PHOTO"] :
+    /\bid\b|identity|aadhaar|aadhar|\bpan\b|passport|licen/.test(l) ? ["ID_CARD"] :
+    /transcript|marksheet|grade/.test(l) ? ["TRANSCRIPT"] :
+    /certificate/.test(l) ? ["CERTIFICATE"] : [];
+  const hit = want.find((k) => fileKeys.includes(k));
+  if (hit) return hit;
+  return fileKeys.length === 1 && /upload|attach|file|document/.test(l) ? fileKeys[0] : null;
+}
+
+export function rankCandidates({ task, elements, history, vaultTags, fileKeys = [] }) {
   const tw = words(task);
   const acted = actedTags(history);
   const pendingInForm = new Map(); // form index -> fields still to handle
@@ -93,8 +108,10 @@ export function rankCandidates({ task, elements, history, vaultTags }) {
       if (DESTRUCTIVE.test(e.label) && !overlap(words(e.label), tw)) score -= 4;
       if (e.kind === "LINK") score -= 0.5;
       if ((e.kind === "CHECKBOX" || e.kind === "RADIO") && !e.checked && TICK.test(task) && (overlap(words(e.label), tw) || /confirm|agree|accept|consent|terms/i.test(e.label))) score += 3;
-      const cand = { e, vault, searchOk: !!query && !searched && /search/i.test(e.label), score: score - idx * 0.0001 };
-      if ((e.kind === "INPUT" && !e.filled && score > 0) || ((e.kind === "SELECT" || e.kind === "CHECKBOX" || e.kind === "RADIO") && score > 0)) {
+      const fileKey = e.kind === "UPLOAD" && !e.filled ? fileKeyFor(e.label, fileKeys) : null;
+      if (fileKey && /resume|\bcv\b|upload|attach|apply|application|document|vault|\bmy\b/i.test(task)) score += 4;
+      const cand = { e, vault, fileKey, searchOk: !!query && !searched && /search/i.test(e.label), score: score - idx * 0.0001 };
+      if ((e.kind === "INPUT" && !e.filled && score > 0) || ((e.kind === "SELECT" || e.kind === "CHECKBOX" || e.kind === "RADIO" || (e.kind === "UPLOAD" && fileKey)) && score > 0)) {
         if (e.form != null) pendingInForm.set(e.form, (pendingInForm.get(e.form) || 0) + 1);
       }
       return cand;
@@ -192,6 +209,7 @@ function determinedFill(c, task) {
   const e = c.e;
   if (e.kind === "INPUT") return !!(c.vault || c.searchOk || (/message|comment|feedback|description|details|note|reason|why/i.test(e.label) && messageFromTask(task)));
   if (e.kind === "SELECT") return !!pickOption(e.options, task);
+  if (e.kind === "UPLOAD") return !!c.fileKey;
   if (e.kind === "CHECKBOX" || e.kind === "RADIO") return !e.checked && TICK.test(task);
   return false;
 }
@@ -224,6 +242,10 @@ async function buildAction(choice, task, imageBlob, allowDraft) {
         if (!action.text) action.text = task;
       }
     }
+  } else if (e.kind === "UPLOAD") {
+    if (!choice.fileKey) return null;
+    action.type = "upload";
+    action.file = `[FILE_${choice.fileKey}]`;
   } else if (e.kind === "SELECT") {
     action.type = "select";
     let opt = pickOption(e.options, task);
@@ -252,11 +274,11 @@ async function buildAction(choice, task, imageBlob, allowDraft) {
  *                { confident: false, reason } so the step goes to Gemini.
  * @returns {Promise<{observation, thought, status, action, local: true, confident, model, latencyMs} | {confident:false, reason}>}
  */
-export async function localDecide({ task, elements, history, vault, imageBlob, mode = "backup" }) {
+export async function localDecide({ task, elements, history, vault, vaultFiles = [], imageBlob, mode = "backup" }) {
   const t0 = performance.now();
   const first = mode === "first";
   const vaultTags = vault.map((v) => v.tag);
-  const ranked = rankCandidates({ task, elements, history, vaultTags });
+  const ranked = rankCandidates({ task, elements, history, vaultTags, fileKeys: vaultFiles.map((f) => f.key) });
   const viable = ranked.filter((c) => c.score > 0);
   const actedCount = actedTags(history).size;
   const out = (d) => ({ ...d, local: true, model: LOCAL_MODEL.name, latencyMs: Math.round(performance.now() - t0) });

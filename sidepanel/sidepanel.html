@@ -242,9 +242,22 @@
             <p class="set-hint">One <code>KEY=value</code> per line. The AI only sees <code>[VAULT_EMAIL]</code>-style tags; values are filled in locally after validation.</p>
           </div>
           <div class="import-box">
-            <button id="vaultImportBtn" class="btn ghost sm block" type="button">Import from file…</button>
-            <p class="set-hint center">ID card photo, PDF, résumé (.docx), contact card (.vcf), .txt, .csv, .json</p>
-            <input id="vaultFile" type="file" multiple accept="image/*,.pdf,.docx,.txt,.csv,.json,.vcf" hidden />
+            <span class="set-label">When I add a file</span>
+            <div class="segmented" role="radiogroup" aria-label="When I add a file">
+              <label><input type="radio" name="vaultFileMode" value="extract" /><span>Extract details</span></label>
+              <label><input type="radio" name="vaultFileMode" value="store" /><span>Store the file</span></label>
+              <label><input type="radio" name="vaultFileMode" value="both" /><span>Both</span></label>
+            </div>
+            <p class="set-hint opt" data-name="vaultFileMode" data-value="extract">Reads your name, email, phone… into the details above. The file itself isn't kept.</p>
+            <p class="set-hint opt" data-name="vaultFileMode" data-value="store">Keeps the file on this device for upload fields (e.g. “Upload résumé”). The AI only sees a tag like [FILE_RESUME].</p>
+            <p class="set-hint opt" data-name="vaultFileMode" data-value="both">Reads the details and keeps the file for upload fields — best for a résumé.</p>
+            <button id="vaultImportBtn" class="btn ghost sm block" type="button">Add file…</button>
+            <p class="set-hint center">Résumé (.pdf, .docx), ID card photo, contact card (.vcf), .txt, .csv, .json — any file can be stored</p>
+            <input id="vaultFile" type="file" multiple hidden />
+          </div>
+          <div class="set-field">
+            <span class="set-label">Stored files</span>
+            <div id="vaultFiles" class="vault-files"></div>
           </div>
           <label class="switch-row">
             <span><b>Extract with Gemini instead</b><small>Uploads the file to Google. Off = read on this device.</small></span>

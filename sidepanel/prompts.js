@@ -58,7 +58,7 @@ export const DETECT_SCHEMA = {
   required: ["regions"],
 };
 
-export const ACTION_TYPES = ["click", "type", "select", "scroll", "press_key", "navigate", "go_back", "wait", "done", "ask_user"];
+export const ACTION_TYPES = ["click", "type", "select", "upload", "scroll", "press_key", "navigate", "go_back", "wait", "done", "ask_user"];
 
 export const AGENT_SYSTEM = `You are Stellar, a privacy-first browser automation agent operating the user's Chrome tab.
 
@@ -71,6 +71,7 @@ Choose exactly ONE next action:
 - click {target}
 - type {target, text, clear (default true), submit (press Enter after)}
 - select {target, text}  — choose a dropdown option by its visible text
+- upload {target, file}  — attach one of the user's stored files (listed under VAULT FILES, e.g. "[FILE_RESUME]") to a file-upload field (an UPLOAD_xx element). Never click UPLOAD elements: that opens the computer's file picker, which you cannot use.
 - scroll {direction: "up"|"down", target (optional scrollable element)}
 - press_key {key: Enter|Tab|Escape|ArrowDown|ArrowUp|Backspace|Space, target (optional)}
 - navigate {url}  — absolute http(s) URL
@@ -109,6 +110,7 @@ export const ACTION_SCHEMA = {
         submit: { type: "BOOLEAN" },
         final_answer: { type: "STRING" },
         vault_key: { type: "STRING" },
+        file: { type: "STRING" },
       },
       required: ["type"],
     },
@@ -117,7 +119,7 @@ export const ACTION_SCHEMA = {
   propertyOrdering: ["observation", "thought", "status", "action"],
 };
 
-export function buildStepPrompt({ task, step, maxSteps, page, regions, vaultTags, elements, history, userLang = "" }) {
+export function buildStepPrompt({ task, step, maxSteps, page, regions, vaultTags, vaultFiles = [], elements, history, userLang = "" }) {
   const lines = [];
   lines.push(`TASK: ${task}`);
   if (userLang) {
@@ -135,6 +137,7 @@ export function buildStepPrompt({ task, step, maxSteps, page, regions, vaultTags
   } else lines.push("- none");
   lines.push("");
   lines.push(`VAULT TAGS: ${vaultTags.length ? vaultTags.map((t) => `[${t}]`).join(", ") : "none"}`);
+  lines.push(`VAULT FILES (stored documents for upload fields — you never see their contents): ${vaultFiles.length ? vaultFiles.map((f) => `[FILE_${f.key}] ${f.name}`).join(", ") : "none"}`);
   lines.push("");
   lines.push("INTERACTIVE ELEMENTS (tag, kind, label, state):");
   if (!elements.length) lines.push("- none visible");
@@ -147,6 +150,7 @@ export function buildStepPrompt({ task, step, maxSteps, page, regions, vaultTags
     if (e.disabled) state.push("disabled");
     if (e.sensitive) state.push("sensitive-field");
     if (e.required) state.push("required");
+    if (e.kind === "UPLOAD") state.push(e.fileName ? `file attached: ${e.fileName}` : "no file attached");
     if (e.editor) state.push("CODE EDITOR — use type with the complete code; it replaces everything in the editor");
     if (e.options?.length) state.push(`options: ${e.options.slice(0, 8).map((o) => `"${o}"`).join(", ")}${e.options.length > 8 ? ", …" : ""}; selected: "${e.selected}"`);
     lines.push(`- ${e.tag} "${e.label}"${state.length ? ` (${state.join(", ")})` : ""}`);
