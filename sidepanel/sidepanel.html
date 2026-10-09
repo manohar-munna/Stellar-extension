@@ -50,7 +50,13 @@
     </header>
 
     <section class="composer">
-      <textarea id="task" rows="3" placeholder="Tell Stellar what to do on this tab…&#10;e.g. “Find the cheapest wireless earbuds and open the product page”"></textarea>
+      <div class="task-wrap">
+        <textarea id="task" rows="3" placeholder="Tell Stellar what to do on this tab — type, or press 🎤 and speak in any language…&#10;e.g. “Find the cheapest wireless earbuds and open the product page”"></textarea>
+        <div class="voice">
+          <select id="voiceLang" class="voice-lang" title="The language you speak — Auto identifies it" aria-label="Spoken language"></select>
+          <button id="micBtn" class="mic" type="button" title="Speak your task (any language)" aria-label="Speak your task" aria-pressed="false">🎤</button>
+        </div>
+      </div>
       <div class="row">
         <div class="segmented modeswitch" role="radiogroup" aria-label="Run mode" title="Safe asks before risky actions · Autopilot runs to the end and only stops for real questions">
           <label><input type="radio" name="runMode" value="safe" /><span>Safe</span></label>
@@ -217,6 +223,10 @@
           </div>
           <p class="set-hint opt" data-name="pace" data-value="guided">Pauses about a second on every stage so viewers can follow along.</p>
           <p class="set-hint opt" data-name="pace" data-value="fast">Runs at full speed.</p>
+          <label class="switch-row">
+            <span><b>Read replies aloud after voice tasks</b><small>When you speak a task, Stellar answers in your language and reads its questions and the result aloud with the browser's voice.</small></span>
+            <input id="speakReplies" class="switch" type="checkbox" />
+          </label>
           <label class="switch-row">
             <span><b>Real mouse &amp; keyboard</b><small>Clicks and types through Chrome's real input, so React fields, rich-text editors, custom dropdowns and autofilled logins work. Falls back to scripted events when needed. Never clicks CAPTCHAs. Chrome shows a “started debugging this browser” bar while a task runs. Off = scripted events only.</small></span>
             <input id="realClick" class="switch" type="checkbox" />

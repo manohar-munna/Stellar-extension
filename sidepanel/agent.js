@@ -12,6 +12,7 @@ import { localDecide } from "./local/planner.js";
 import { LOCAL_MODEL, holdLocalModel, loadLocalModel, isLocalModelCached, localState } from "./local/vlm.js";
 import { detectFaces } from "./local/faces.js";
 import { RealInput } from "./real-input.js";
+import { baseOf, languageName } from "./voice.js";
 
 const NEW_TAB_URL = /^(chrome:\/\/(newtab|new-tab-page)|chrome-search:\/\/|about:blank|edge:\/\/newtab)/;
 
@@ -278,7 +279,7 @@ export class StellarAgent {
 
   // ------------------------------------------------------------------ run
 
-  async run({ task, mode }) {
+  async run({ task, mode, lang = "", spoken = false }) {
     this.settings = await loadSettings();
     this.stopped = false;
     this.running = true;
@@ -303,7 +304,8 @@ export class StellarAgent {
     const autofillTried = new Set(); // pages where the real-click unlock was tried
     let tabId = null;
 
-    ui.runStarted({ task, snapshot, settings, maxSteps });
+    ui.runStarted({ task, snapshot, settings, maxSteps, lang, spoken });
+    const foreign = !!lang && baseOf(lang) !== "en";
     // Never auto-unload the on-device model in the middle of a run.
     const holdModel = settings.localBackup !== "off" && !snapshot;
     if (holdModel) holdLocalModel(true);
@@ -319,6 +321,26 @@ export class StellarAgent {
     try {
       if (!settings.apiKey && !localOnly && (!snapshot || settings.detector === "vision")) {
         throw new Error("Add your Gemini API key in Settings first.");
+      }
+
+      // The on-device planner matches English words, so it gets an English copy
+      // of a task given in another language (Gemini still sees the original).
+      let localTask = task;
+      if (foreign && !snapshot && (localFirst || localOnly) && settings.apiKey) {
+        ui.status(`Translating the ${languageName(lang)} task for the on-device model…`);
+        try {
+          const res = await generateJson({
+            apiKey: settings.apiKey,
+            model: settings.detectModel || settings.reasonModel,
+            prompt: `Translate this browser task into plain English for a keyword-based planner. Keep names, numbers, [TAGS] and any text the user wants typed or sent exactly as written, in its original language.\n\nTask: ${scrubText(task, knownSecrets([], vault), { generic: false })}`,
+            schema: { type: "OBJECT", properties: { english: { type: "STRING" } }, required: ["english"] },
+            temperature: 0,
+            signal: this.abort.signal,
+          });
+          if (res.json?.english?.trim()) localTask = res.json.english.trim();
+        } catch {
+          /* the planner works from the original wording */
+        }
       }
 
       let tab = await findTargetTab();
@@ -437,7 +459,7 @@ export class StellarAgent {
           try {
             await loadLocalModel();
             const imageBlob = await (await fetch(labelledFrame.dataUrl)).blob();
-            const d = await localDecide({ task, elements: labelled, history, vault, imageBlob, mode: localFirst ? "first" : "backup" });
+            const d = await localDecide({ task: localTask, elements: labelled, history, vault, imageBlob, mode: localFirst ? "first" : "backup" });
             if (d.confident) pick = d;
             else localWhy = d.reason;
           } catch (err) {
@@ -547,6 +569,7 @@ export class StellarAgent {
           vaultTags: vault.map((v) => v.tag),
           elements,
           history: history.map((h) => scrubText(h.text, secrets)),
+          userLang: foreign ? languageName(lang) : "",
         });
         const leaks = leakCheck(AGENT_SYSTEM + "\n" + prompt, secrets);
         const payloadPreview = {
@@ -592,7 +615,7 @@ export class StellarAgent {
           ui.status(`On-device ${LOCAL_MODEL.name} is choosing the next action…`);
           const imageBlob = await (await fetch(sanitized.dataUrl)).blob();
           try {
-            return await localDecide({ task, elements, history, vault, imageBlob });
+            return await localDecide({ task: localTask, elements, history, vault, imageBlob });
           } catch (err) {
             throw new Error(`On-device model failed too: ${err.message}`);
           }

@@ -1,0 +1,290 @@
+// Voice: speak a task in any language, hear the result back.
+//
+// - Listening uses Chrome's Web Speech recognition (live text as you speak).
+//   It must be told the language up front, so "Auto" listens in the language
+//   you used last (or the browser's), and when the result is empty or
+//   unsure it asks Gemini to identify the spoken language and transcribe the
+//   clip — then remembers that language for next time.
+// - The language of any text is identified on-device (Chrome's built-in
+//   LanguageDetector when present, otherwise by script).
+// - Replies are read aloud with the browser's speech synthesis in that language.
+//
+// Chrome's recognizer sends the audio to Google's speech service; page
+// content is never part of it.
+
+import { generateJson } from "./gemini.js";
+
+export const VOICE_LANGS = [
+  ["auto", "Auto"],
+  ["en-IN", "English (India)"],
+  ["hi-IN", "हिन्दी"],
+  ["ta-IN", "தமிழ்"],
+  ["te-IN", "తెలుగు"],
+  ["kn-IN", "ಕನ್ನಡ"],
+  ["ml-IN", "മലയാളം"],
+  ["mr-IN", "मराठी"],
+  ["bn-IN", "বাংলা"],
+  ["gu-IN", "ગુજરાતી"],
+  ["pa-IN", "ਪੰਜਾਬੀ"],
+  ["or-IN", "ଓଡ଼ିଆ"],
+  ["ur-IN", "اردو"],
+  ["en-US", "English (US)"],
+  ["es-ES", "Español"],
+  ["fr-FR", "Français"],
+  ["de-DE", "Deutsch"],
+  ["pt-BR", "Português"],
+  ["it-IT", "Italiano"],
+  ["ru-RU", "Русский"],
+  ["ar-SA", "العربية"],
+  ["ja-JP", "日本語"],
+  ["ko-KR", "한국어"],
+  ["zh-CN", "中文"],
+];
+
+const NAMES = {
+  en: "English", hi: "Hindi", ta: "Tamil", te: "Telugu", kn: "Kannada", ml: "Malayalam", mr: "Marathi", bn: "Bengali",
+  gu: "Gujarati", pa: "Punjabi", or: "Odia", ur: "Urdu", es: "Spanish", fr: "French", de: "German", pt: "Portuguese",
+  it: "Italian", ru: "Russian", ar: "Arabic", ja: "Japanese", ko: "Korean", zh: "Chinese",
+};
+const DEFAULT_REGION = { en: "en-IN", hi: "hi-IN", ta: "ta-IN", te: "te-IN", kn: "kn-IN", ml: "ml-IN", mr: "mr-IN", bn: "bn-IN", gu: "gu-IN", pa: "pa-IN", or: "or-IN", ur: "ur-IN", es: "es-ES", fr: "fr-FR", de: "de-DE", pt: "pt-BR", it: "it-IT", ru: "ru-RU", ar: "ar-SA", ja: "ja-JP", ko: "ko-KR", zh: "zh-CN" };
+
+export const baseOf = (lang) => String(lang || "en").toLowerCase().split(/[-_]/)[0];
+export const languageName = (lang) => NAMES[baseOf(lang)] || lang;
+export const fullTag = (lang) => (String(lang).includes("-") ? lang : DEFAULT_REGION[baseOf(lang)] || lang);
+
+export const voiceSupported = () => !!(self.SpeechRecognition || self.webkitSpeechRecognition);
+
+// ------------------------------------------------------------ identify text
+
+const SCRIPTS = [
+  [/[஀-௿]/, "ta"], [/[ఀ-౿]/, "te"], [/[ಀ-೿]/, "kn"], [/[ഀ-ൿ]/, "ml"],
+  [/[ঀ-৿]/, "bn"], [/[਀-੿]/, "pa"], [/[઀-૿]/, "gu"], [/[଀-୿]/, "or"],
+  [/[ऀ-ॿ]/, "hi"], [/[぀-ヿ]/, "ja"], [/[가-힯]/, "ko"], [/[一-鿿]/, "zh"],
+  [/[؀-ۿ]/, "ar"], [/[Ѐ-ӿ]/, "ru"],
+];
+
+let detectorP = null;
+async function builtInDetector() {
+  if (!self.LanguageDetector) return null;
+  detectorP ||= (async () => {
+    try {
+      if ((await self.LanguageDetector.availability()) !== "available") return null;
+      return await self.LanguageDetector.create();
+    } catch {
+      return null;
+    }
+  })();
+  return detectorP;
+}
+
+/** Language of a piece of text, on-device. `hint` breaks ties (e.g. Hindi vs Marathi, Arabic vs Urdu). */
+export async function identifyLanguage(text, hint = "") {
+  const t = String(text || "").trim();
+  if (!t) return null;
+  const det = await builtInDetector();
+  if (det) {
+    try {
+      const [top] = await det.detect(t);
+      if (top && top.confidence > 0.6 && top.detectedLanguage !== "und") return baseOf(top.detectedLanguage);
+    } catch {
+      /* fall back to script */
+    }
+  }
+  for (const [re, lang] of SCRIPTS) {
+    if (!re.test(t)) continue;
+    if (lang === "hi" && baseOf(hint) === "mr") return "mr";
+    if (lang === "ar" && baseOf(hint) === "ur") return "ur";
+    return lang;
+  }
+  // Latin script: trust the hint when it is a Latin-script language, else English.
+  return ["en", "es", "fr", "de", "pt", "it"].includes(baseOf(hint)) ? baseOf(hint) : "en";
+}
+
+// ------------------------------------------------------------ speak
+
+let voicesP = null;
+function voices() {
+  voicesP ||= new Promise((resolve) => {
+    const v = speechSynthesis.getVoices();
+    if (v.length) return resolve(v);
+    speechSynthesis.addEventListener("voiceschanged", () => resolve(speechSynthesis.getVoices()), { once: true });
+    setTimeout(() => resolve(speechSynthesis.getVoices()), 1500);
+  });
+  return voicesP;
+}
+
+/** Read text aloud in its own language (falls back to `lang`). */
+export async function speak(text, lang) {
+  if (!self.speechSynthesis || !text) return;
+  const clean = String(text).replace(/\[([A-Z][A-Z0-9_]*)\]/g, (m, t) => t.replace(/_\d+$/, "").replace(/^VAULT_/, "").replace(/_/g, " ").toLowerCase()).slice(0, 600);
+  const base = (await identifyLanguage(clean, lang)) || baseOf(lang);
+  const tag = baseOf(lang) === base ? fullTag(lang) : fullTag(base);
+  const all = await voices();
+  const voice = all.find((v) => v.lang.toLowerCase() === tag.toLowerCase()) || all.find((v) => baseOf(v.lang) === base);
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(clean);
+  u.lang = tag;
+  if (voice) u.voice = voice;
+  speechSynthesis.speak(u);
+}
+
+export const stopSpeaking = () => self.speechSynthesis?.cancel();
+
+// ------------------------------------------------------------ listen
+
+/** Records the microphone as 16 kHz mono WAV (for the Gemini language fallback). */
+class WavRecorder {
+  async start() {
+    this.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+    this.ctx = new AudioContext();
+    const src = this.ctx.createMediaStreamSource(this.stream);
+    this.proc = this.ctx.createScriptProcessor(4096, 1, 1);
+    this.chunks = [];
+    this.proc.onaudioprocess = (e) => {
+      if (this.chunks.length < 600) this.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+    };
+    src.connect(this.proc);
+    this.proc.connect(this.ctx.destination);
+  }
+
+  async stop() {
+    this.proc?.disconnect();
+    this.stream?.getTracks().forEach((t) => t.stop());
+    const rate = this.ctx?.sampleRate || 48000;
+    await this.ctx?.close().catch(() => {});
+    const total = (this.chunks || []).reduce((n, c) => n + c.length, 0);
+    if (!total) return null;
+    const ratio = rate / 16000;
+    const out = new Int16Array(Math.floor(total / ratio));
+    let i = 0;
+    let pos = 0;
+    const flat = new Float32Array(total);
+    for (const c of this.chunks) {
+      flat.set(c, pos);
+      pos += c.length;
+    }
+    for (; i < out.length; i++) out[i] = Math.max(-1, Math.min(1, flat[Math.floor(i * ratio)])) * 0x7fff;
+    const buf = new ArrayBuffer(44 + out.length * 2);
+    const v = new DataView(buf);
+    const str = (o, s) => [...s].forEach((ch, k) => v.setUint8(o + k, ch.charCodeAt(0)));
+    str(0, "RIFF"); v.setUint32(4, 36 + out.length * 2, true); str(8, "WAVE"); str(12, "fmt ");
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 16000, true);
+    v.setUint32(28, 32000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, "data"); v.setUint32(40, out.length * 2, true);
+    new Int16Array(buf, 44).set(out);
+    return new Blob([buf], { type: "audio/wav" });
+  }
+}
+
+const ID_SCHEMA = {
+  type: "OBJECT",
+  properties: { language_code: { type: "STRING" }, language_name: { type: "STRING" }, transcript: { type: "STRING" } },
+  required: ["language_code", "transcript"],
+};
+
+/** Gemini identifies the spoken language and transcribes the clip in its native script. */
+export async function identifySpeech(wav, settings) {
+  const bytes = new Uint8Array(await wav.arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  const { json } = await generateJson({
+    apiKey: settings.apiKey,
+    model: settings.detectModel || settings.reasonModel,
+    prompt:
+      "This is a short voice command for a browser assistant. Identify the language spoken and transcribe it exactly, in that language's native script (do not translate). " +
+      "language_code must be a BCP-47 tag with region, e.g. hi-IN, ta-IN, en-IN, es-ES.",
+    image: { mimeType: "audio/wav", base64: btoa(bin) },
+    schema: ID_SCHEMA,
+    temperature: 0,
+  });
+  return json;
+}
+
+/**
+ * One listening session. Callbacks: onInterim(text), onDone({ text, lang, via }), onError(code, message).
+ * `lang` is a BCP-47 tag or "auto".
+ */
+export class Listener {
+  constructor({ lang, settings, lastLang, onInterim, onDone, onError, onStatus }) {
+    Object.assign(this, { lang, settings, lastLang, onInterim, onDone, onError, onStatus });
+    this.auto = lang === "auto";
+    this.listenLang = this.auto ? fullTag(lastLang || navigator.language || "en-IN") : lang;
+  }
+
+  async start() {
+    const SR = self.SpeechRecognition || self.webkitSpeechRecognition;
+    if (!SR) return this.onError("unsupported", "This browser has no speech recognition.");
+    // Recording in parallel lets Auto ask Gemini when the recognizer was unsure.
+    if (this.auto && this.settings.apiKey) {
+      this.rec = new WavRecorder();
+      try {
+        await this.rec.start();
+      } catch (e) {
+        this.rec = null;
+        if (e?.name === "NotAllowedError") return this.onError("not-allowed", "Microphone permission is needed.");
+      }
+    }
+    const r = (this.r = new SR());
+    r.lang = this.listenLang;
+    r.interimResults = true;
+    r.continuous = false;
+    r.maxAlternatives = 1;
+    this.finalText = "";
+    this.confidence = 0;
+    r.onresult = (e) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i];
+        if (res.isFinal) {
+          this.finalText += res[0].transcript;
+          this.confidence = res[0].confidence;
+        } else interim += res[0].transcript;
+      }
+      this.onInterim((this.finalText + interim).trim());
+    };
+    r.onerror = (e) => {
+      this.error = e.error;
+    };
+    r.onend = () => this.finish();
+    try {
+      r.start();
+      this.onStatus?.(`Listening (${languageName(this.listenLang)})…`);
+    } catch (e) {
+      this.onError("start", e.message);
+    }
+  }
+
+  stop() {
+    try {
+      this.r?.stop();
+    } catch {
+      /* already stopped */
+    }
+  }
+
+  async finish() {
+    if (this.done) return;
+    this.done = true;
+    const wav = this.rec ? await this.rec.stop() : null;
+    if (this.error === "not-allowed" || this.error === "service-not-allowed") return this.onError("not-allowed", "Microphone permission is needed.");
+    const text = this.finalText.trim();
+    const sure = text && (this.confidence === 0 || this.confidence >= 0.6); // Chrome sometimes reports 0 for confident results
+    if (sure) {
+      const base = await identifyLanguage(text, this.listenLang);
+      const lang = base === baseOf(this.listenLang) ? this.listenLang : fullTag(base);
+      return this.onDone({ text, lang, via: "browser" });
+    }
+    // Auto: unsure or nothing heard in the guessed language — let Gemini identify it.
+    if (this.auto && wav && wav.size > 8000) {
+      this.onStatus?.("Identifying the language…");
+      try {
+        const j = await identifySpeech(wav, this.settings);
+        if (j?.transcript?.trim()) return this.onDone({ text: j.transcript.trim(), lang: fullTag(j.language_code || "en-IN"), via: "gemini" });
+      } catch (e) {
+        if (text) return this.onDone({ text, lang: this.listenLang, via: "browser" });
+        return this.onError("identify", `Couldn't identify the language (${e.message}).`);
+      }
+    }
+    if (text) return this.onDone({ text, lang: this.listenLang, via: "browser" });
+    this.onError(this.error || "no-speech", this.error === "network" ? "Chrome's speech service is unreachable." : "Didn't catch that — try again, or pick your language.");
+  }
+}

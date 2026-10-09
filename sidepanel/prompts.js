@@ -117,9 +117,10 @@ export const ACTION_SCHEMA = {
   propertyOrdering: ["observation", "thought", "status", "action"],
 };
 
-export function buildStepPrompt({ task, step, maxSteps, page, regions, vaultTags, elements, history }) {
+export function buildStepPrompt({ task, step, maxSteps, page, regions, vaultTags, elements, history, userLang = "" }) {
   const lines = [];
   lines.push(`TASK: ${task}`);
+  if (userLang) lines.push(`USER LANGUAGE: ${userLang} — write "status", "final_answer" and any ask_user question in ${userLang}. Keep element tags, [TAGS] and on-page text as they are.`);
   lines.push(`STEP: ${step} of max ${maxSteps}`);
   lines.push(`PAGE: "${page.title}" — ${page.url}`);
   lines.push(`VIEWPORT: ${page.viewport.w}x${page.viewport.h}, scrolled ${page.viewport.scrollY}px of ${page.viewport.docH}px total height`);

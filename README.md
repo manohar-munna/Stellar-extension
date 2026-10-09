@@ -64,6 +64,13 @@ Stellar card in `chrome://extensions`. Settings and the vault are kept.
   Arkose or Cloudflare “Just a moment…” check is on screen, the agent pauses *before* any model call, shows a
   **Human verification needed** card and an on-page message, and resumes by itself as soon as the check is
   cleared (or when you click *I’ve done it — continue*). Model actions that target a CAPTCHA widget are blocked.
+- **Voice, any language**: press 🎤 in the task box and speak. Chrome's speech recognition types it live; the
+  run starts 2 s later unless you click the box to edit. *Auto* listens in the language you used last and,
+  when the browser is unsure, asks Gemini to identify the spoken language (then remembers it); or pick a
+  language from the menu. Stellar answers in that language — typed non-English tasks too — and reads its
+  questions and the result aloud with the browser's voice (Settings → Agent). For Local-first, the on-device
+  planner gets an English copy of the task. The first time, a tab opens to allow the microphone (the side
+  panel can't show that prompt). Note: Chrome's recogniser sends the audio to Google's speech service.
 - **Real mouse & keyboard** (Settings → Agent, on by default): clicks, typing and keys go through Chrome's real
   input via the debugger protocol — the reason the extension asks for the `debugger` permission. That makes
   React/Vue-controlled fields, rich-text editors, custom dropdowns and buttons that ignore scripted events work.

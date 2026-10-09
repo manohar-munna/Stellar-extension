@@ -7,6 +7,7 @@ import { listModels } from "./gemini.js";
 import { CATEGORY_COLORS } from "./privacy.js";
 import { loadLocalModel, onLocalState, isLocalModelCached, localState, LOCAL_MODEL, configureAutoUnload } from "./local/vlm.js";
 import { extractFromFile, mergeIntoVault, VAULT_FIELDS } from "./vault-import.js";
+import { VOICE_LANGS, Listener, speak, stopSpeaking, voiceSupported, identifyLanguage, languageName, fullTag } from "./voice.js";
 
 const $ = (sel) => document.querySelector(sel);
 const STAGES = ["capture", "detect", "redact", "send", "reason", "validate", "execute"];
@@ -737,9 +738,11 @@ function removePlaceholders(run) {
 // ---------------------------------------------------------------------- ui
 
 const ui = {
-  runStarted({ task, snapshot, settings, maxSteps }) {
+  runStarted({ task, snapshot, settings, maxSteps, lang, spoken }) {
     $("#intro")?.remove();
     activeRun = makeRun({ task, snapshot, settings, maxSteps });
+    activeRun.lang = lang;
+    activeRun.spoken = spoken && settings.speakReplies !== false;
     selectRun(activeRun);
     setFollow(true);
     setRunning(true);
@@ -906,6 +909,7 @@ const ui = {
   ask(S, question) {
     const run = activeRun;
     setRunStatus(run, "waiting");
+    if (run.spoken) speak(question, run.lang);
     return new Promise((resolve) => {
       const input = h("textarea", { rows: 2, placeholder: "Your answer…" });
       const box = card(
@@ -985,6 +989,7 @@ const ui = {
   askVault(S, question, key) {
     const run = activeRun;
     setRunStatus(run, "waiting");
+    if (run.spoken) speak(question, run.lang);
     return new Promise((resolve) => {
       const input = h("input", { class: "input", type: /PASS|PIN|OTP|CVV/.test(key) ? "password" : "text", placeholder: key.replace(/_/g, " ").toLowerCase(), spellcheck: "false" });
       const saveBox = h("input", { type: "checkbox", checked: true });
@@ -1040,6 +1045,7 @@ const ui = {
     if (last) summarizeStep(run, last, { collapse: false });
     run.el.append(h("div", { class: `final${ok ? "" : " bad"}` }, h("span", { class: "lbl" }, ok ? "Result" : "Stopped"), message));
     run.log.result = { ok, message, finishedAt: new Date().toISOString() };
+    if (run.spoken) speak(message, run.lang);
     activeRun = null;
     setRunStatus(run, ok ? "done" : "stopped");
     updateRunStats(run);
@@ -1068,8 +1074,80 @@ function start(mode) {
     taskInput.focus();
     return;
   }
-  agent.run({ task, mode }).catch((e) => ui.finish({ ok: false, message: e.message || String(e) }));
+  // Answer in the language of the task: the spoken language, or (typed) identified on-device.
+  const spokenNow = voiceState.text && voiceState.text === task;
+  const langP = spokenNow ? Promise.resolve(voiceState.lang) : mode === "agent" ? identifyLanguage(task).then((b) => (b ? fullTag(b) : "")) : Promise.resolve("");
+  langP.then((lang) => agent.run({ task, mode, lang, spoken: !!spokenNow }).catch((e) => ui.finish({ ok: false, message: e.message || String(e) })));
 }
+
+// ------------------------------------------------------------------ voice
+
+const micBtn = $("#micBtn");
+const voiceLang = $("#voiceLang");
+const voiceState = { listener: null, text: "", lang: "", timer: null };
+voiceLang.append(...VOICE_LANGS.map(([v, label]) => h("option", { value: v }, label)));
+
+function cancelAutoRun() {
+  clearTimeout(voiceState.timer);
+  voiceState.timer = null;
+}
+
+function setListening(on) {
+  micBtn.setAttribute("aria-pressed", on ? "true" : "false");
+  micBtn.title = on ? "Stop listening" : "Speak your task (any language)";
+}
+
+micBtn.addEventListener("click", async () => {
+  stopSpeaking();
+  cancelAutoRun();
+  if (voiceState.listener) {
+    voiceState.listener.stop();
+    return;
+  }
+  if (!voiceSupported()) return ui.status("This browser has no speech recognition.");
+  const s = await loadSettings();
+  const listener = new Listener({
+    lang: voiceLang.value,
+    settings: s,
+    lastLang: s.lastVoiceLang,
+    onStatus: (t) => ui.status(t),
+    onInterim: (t) => (taskInput.value = t),
+    onDone: async ({ text, lang, via }) => {
+      voiceState.listener = null;
+      setListening(false);
+      taskInput.value = text;
+      voiceState.text = text;
+      voiceState.lang = lang;
+      await saveSettings({ lastVoiceLang: lang });
+      if (agent.running) return ui.status(`Heard (${languageName(lang)}).`);
+      // Hands-free: run shortly unless the user starts editing.
+      ui.status(`Heard in ${languageName(lang)}${via === "gemini" ? " (identified by Gemini)" : ""} — running in 2 s… click the box to edit instead.`);
+      voiceState.timer = setTimeout(() => {
+        voiceState.timer = null;
+        start("agent");
+      }, 2000);
+    },
+    onError: (code, message) => {
+      voiceState.listener = null;
+      setListening(false);
+      if (code === "not-allowed") {
+        chrome.tabs.create({ url: chrome.runtime.getURL("sidepanel/mic.html") });
+        return ui.status("Allow the microphone in the tab that just opened, then press 🎤 again.");
+      }
+      ui.status(message);
+    },
+  });
+  voiceState.listener = listener;
+  setListening(true);
+  listener.start();
+});
+
+voiceLang.addEventListener("change", () => saveSettings({ voiceLang: voiceLang.value }));
+taskInput.addEventListener("focus", cancelAutoRun);
+taskInput.addEventListener("input", () => {
+  cancelAutoRun();
+  if (taskInput.value !== voiceState.text) voiceState.text = "";
+});
 
 runBtn.addEventListener("click", () => start("agent"));
 snapBtn.addEventListener("click", () => start("snapshot"));
@@ -1157,6 +1235,7 @@ async function openSettings() {
   document.querySelector(`input[name=localBackup][value=${s.localBackup || "localfirst"}]`).checked = true;
   $("#localPreload").checked = s.localPreload !== false;
   $("#realClick").checked = s.realClick !== false;
+  $("#speakReplies").checked = s.speakReplies !== false;
   (document.querySelector(`input[name=localUnload][value="${s.localUnloadMinutes ?? 10}"]`) || document.querySelector("input[name=localUnload][value='10']")).checked = true;
   $("#vaultGemini").checked = s.vaultExtract === "gemini";
   $("#vaultReview").replaceChildren();
@@ -1207,6 +1286,7 @@ $("#saveSettings").addEventListener("click", async () => {
     localBackup: document.querySelector("input[name=localBackup]:checked")?.value || "localfirst",
     localPreload: $("#localPreload").checked,
     realClick: $("#realClick").checked,
+    speakReplies: $("#speakReplies").checked,
     localUnloadMinutes: Number(document.querySelector("input[name=localUnload]:checked")?.value ?? 10),
     vaultExtract: $("#vaultGemini").checked ? "gemini" : "local",
     maxSteps: Math.max(1, Math.min(50, parseInt($("#maxSteps").value, 10) || 15)),
@@ -1333,6 +1413,8 @@ document.querySelectorAll("input[name=runMode]").forEach((r) =>
   applyPresenter(s.presenter);
   applyTheme(s.theme || "system");
   applyRunMode(s.runMode);
+  voiceLang.value = s.voiceLang || "auto";
+  micBtn.hidden = voiceLang.hidden = !voiceSupported();
   configureAutoUnload(s.localUnloadMinutes ?? 10);
   // Warm the on-device model in the background once it has been downloaded.
   if (s.localBackup !== "off" && s.localPreload !== false && (await isLocalModelCached())) loadLocalModel().catch(() => {});

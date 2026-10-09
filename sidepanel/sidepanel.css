@@ -1803,3 +1803,64 @@ pre {
   color: var(--muted);
   margin-top: 8px;
 }
+
+/* ------------------------------------------------------------------ voice */
+
+.task-wrap {
+  position: relative;
+}
+
+.task-wrap textarea {
+  padding-bottom: 40px;
+}
+
+.voice {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.voice-lang {
+  max-width: 120px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  padding: 0 6px;
+}
+
+.mic {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mic:hover {
+  border-color: var(--violet);
+}
+
+.mic[aria-pressed="true"] {
+  background: #e5484d;
+  border-color: #e5484d;
+  animation: mic-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.45); }
+  50% { box-shadow: 0 0 0 7px rgba(229, 72, 77, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mic[aria-pressed="true"] { animation: none; }
+}

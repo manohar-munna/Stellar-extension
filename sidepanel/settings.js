@@ -28,6 +28,11 @@ export const DEFAULTS = {
   // Unlock browser-autofilled logins with one real click on a blank part of the
   // login form (chrome.debugger, attached for about a second).
   realClick: true,
+  // Voice: the language you speak ("auto" identifies it), the last language
+  // identified, and whether replies to spoken tasks are read aloud.
+  voiceLang: "auto",
+  lastVoiceLang: "",
+  speakReplies: true,
   // Unload the on-device model after this many idle minutes (0 = never).
   localUnloadMinutes: 10,
   // Vault import: "local" (on-device) or "gemini" (uploads the document).
