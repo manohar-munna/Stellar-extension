@@ -506,13 +506,15 @@
     return t;
   }
 
-  function findNames() {
+  // `all`: the whole page, not just what is on screen (for page summaries).
+  function findNames(all = false) {
     const names = new Set();
     const add = (n) => {
       const t = nameLike(n);
       if (t) names.add(t);
     };
     const onScreen = (el) => {
+      if (all) return true;
       const r = el.getBoundingClientRect();
       return r.width > 0 && r.height > 0 && intersectsViewport(r);
     };
@@ -565,6 +567,169 @@
       if (out.length >= 60) break;
     }
     return out;
+  }
+
+  // ------------------------------------------------- page text (summaries)
+  // The readable text of the page for the Summarize button. Private values in
+  // it are found here, on-device; the panel swaps them for tags before sending.
+
+  function mainTextRoot() {
+    const body = document.body || document.documentElement;
+    const bodyLen = (body.innerText || "").length;
+    let best = null;
+    let bestLen = 0;
+    for (const el of document.querySelectorAll("article, main, [role=main]")) {
+      if (!isRendered(el)) continue;
+      const n = (el.innerText || "").length;
+      if (n > bestLen) {
+        best = el;
+        bestLen = n;
+      }
+    }
+    // A small <article> (one card in a feed) is not the page's content.
+    return best && bestLen >= Math.min(1500, bodyLen * 0.3) ? best : body;
+  }
+
+  function readText(known = [], wantNames = true, max = 120_000) {
+    const full = (mainTextRoot().innerText || "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    const text = full.slice(0, max);
+    known = known.filter((k) => k && typeof k.value === "string" && k.value.length >= 3);
+    const names = wantNames ? findNames(true).filter((n) => !known.some((k) => k.value === n)) : [];
+    const hits = [...findPiiInString(text, known, "", names), ...findPiiInString(document.title, known, "", names)];
+    return {
+      url: location.href,
+      title: document.title,
+      text,
+      truncated: full.length > max,
+      hits: hits.map(({ category, vaultTag, value }) => ({ category, vaultTag, value })),
+    };
+  }
+
+  // ----------------------------------------- product listings (price compare)
+  // Reads only the product cards of a shop's search results — not the account
+  // bar, delivery address or cart — so personal details stay out of it.
+
+  const PRICE_RE = /(?:₹|Rs\.?|INR|\$|€|£)\s?(\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/i;
+  const PRODUCT_HREF = /\/dp\/[A-Z0-9]{10}|\/gp\/product\/|\/p\/itm|\/\d{5,}\/buy|\/p\/\d{6,}|\/product\/[^/]+\/\d+|\/p\/[a-z0-9]{4,}$/i;
+  const SHOP_CARDS = [
+    {
+      host: /(^|\.)amazon\./,
+      card: '[data-component-type="s-search-result"]',
+      title: "h2",
+      price: '.a-price:not([data-a-strike="true"]) .a-offscreen',
+      sponsored: ".puis-sponsored-label-text, .s-sponsored-label-text",
+    },
+    { host: /(^|\.)myntra\.com$/, card: "li.product-base", brand: ".product-brand", title: ".product-product", price: ".product-discountedPrice, .product-price" },
+    { host: /(^|\.)ajio\.com$/, card: ".item.rilrtl-products-list__item", brand: ".brand", title: ".nameCls", price: ".price" },
+    { host: /(^|\.)snapdeal\.com$/, card: ".product-tuple-listing", title: ".product-title", price: ".product-price" },
+  ];
+  const NOT_A_NAME =
+    /^(sponsored|ad|add to compare|compare|bestseller|best seller|assured|new|hot deal|trending|wishlist|limited time deal|deal of the day|free delivery.*|only \d+ left.*|\d+% off|.*\boff$|m\.?r\.?p.*|see options|add to cart|buy now)$/i;
+
+  function parsePrice(text) {
+    const m = String(text || "").match(PRICE_RE);
+    return m ? parseFloat(m[1].replace(/,/g, "")) : null;
+  }
+
+  function productKey(href) {
+    try {
+      const u = new URL(href, location.href);
+      const m = u.pathname.match(/\/dp\/([A-Z0-9]{10})|\/p\/(itm\w+)|\/(\d{5,})\/buy/i);
+      return m ? m[0] : u.pathname;
+    } catch {
+      return href;
+    }
+  }
+
+  function isProductLink(a) {
+    return PRODUCT_HREF.test((a.getAttribute("href") || "").split(/[?#]/)[0]);
+  }
+
+  // Shops without known markup: start at each product link and widen to the
+  // largest box that still holds only that product and shows a price.
+  function genericCards() {
+    const cards = new Set();
+    for (const a of document.querySelectorAll("a[href]")) {
+      if (!isProductLink(a)) continue;
+      const key = productKey(a.href);
+      let el = a;
+      let card = null;
+      for (let i = 0; i < 8 && el && el !== document.body; i++) {
+        if (i > 0 && [...el.querySelectorAll("a[href]")].some((o) => isProductLink(o) && productKey(o.href) !== key)) break;
+        const t = el.innerText || "";
+        if (t.length > 1500) break;
+        if (PRICE_RE.test(t)) card = el;
+        el = el.parentElement;
+      }
+      if (card) cards.add(card);
+      if (cards.size >= 60) break;
+    }
+    // Keep the outer box when one card sits inside another.
+    return [...cards].filter((c) => ![...cards].some((o) => o !== c && o.contains(c)));
+  }
+
+  function guessName(card, link, text) {
+    const lines = text.split("\n").map(collapse).filter(Boolean);
+    const cands = [link?.getAttribute("title"), card.querySelector("[title]")?.getAttribute("title"), card.querySelector("img[alt]")?.getAttribute("alt"), ...lines];
+    for (const c of cands) {
+      const t = collapse(c || "");
+      if (t.length < 8 || !/\p{L}{3}/u.test(t) || PRICE_RE.test(t) || NOT_A_NAME.test(t) || /^\d/.test(t) || /\b(ratings?|reviews?)\b/i.test(t)) continue;
+      // Fashion grids put the brand on its own short line above the name ("ADIDAS" / "Fluo M Running Shoes").
+      const i = lines.findIndex((l) => l === t || t.startsWith(l) || l.startsWith(t.slice(0, 24)));
+      const brand = i > 0 ? lines[i - 1] : "";
+      if (brand && brand.length <= 24 && /^[\p{L}][\p{L}&.'’ -]*$/u.test(brand) && !NOT_A_NAME.test(brand) && !t.toLowerCase().includes(brand.toLowerCase())) return `${brand} ${t}`;
+      return t;
+    }
+    return "";
+  }
+
+  function productInfo(card, site) {
+    const text = card.innerText || "";
+    const link =
+      [...card.querySelectorAll("a[href]")].find(isProductLink) ||
+      (card.matches("a[href]") ? card : card.closest("a[href]")) ||
+      card.querySelector("a[href]");
+    // Site price selectors are in order of preference (the deal price before the container).
+    const priceEl = (site?.price || "").split(",").map((sel) => sel.trim() && card.querySelector(sel)).find(Boolean);
+    const priceText = (collapse(priceEl?.textContent || "").match(PRICE_RE) || text.match(PRICE_RE))?.[0] || "";
+    let name = "";
+    if (site?.title) name = collapse([site.brand && card.querySelector(site.brand)?.textContent, card.querySelector(site.title)?.textContent].filter(Boolean).join(" "));
+    if (!name) name = guessName(card, link, text);
+    // "4.1 out of 5", "4.3★", a "4.2" line, or "4" over "(5,964)" ratings.
+    const r =
+      text.match(/\b([1-5](?:\.\d)?)\s*(?:out of 5|★)/) ||
+      text.match(/(?:^|\n)\s*([1-5](?:\.\d)?)\s*\n?\s*\(\s*\d[\d,.]*\s*[kKlL]?\s*\)/) ||
+      text.match(/(?:^|\n)\s*([1-5]\.\d)\s*(?:\||\n|$)/);
+    return {
+      name: clip(name, 160),
+      priceText: clip(priceText, 24),
+      price: parsePrice(priceText),
+      rating: r ? parseFloat(r[1]) : null,
+      href: link?.href || "",
+      sponsored: !!(site?.sponsored && card.querySelector(site.sponsored)) || /^\s*Sponsored\b/i.test(text),
+      text: clip(collapse(text), 300),
+    };
+  }
+
+  function readProducts() {
+    const site = SHOP_CARDS.find((s) => s.host.test(location.hostname));
+    let cards = site ? [...document.querySelectorAll(site.card)] : [];
+    if (!cards.length) cards = genericCards();
+    const items = [];
+    const seen = new Set();
+    for (const card of cards) {
+      if (!isRendered(card)) continue;
+      const p = productInfo(card, site);
+      if (!p.name || p.price == null) continue;
+      const key = p.href ? productKey(p.href) : p.name;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      items.push(p);
+      if (items.length >= 40) break;
+    }
+    // Shops answer bots and overload with plain error pages ("503", "Robot Check").
+    const refused = !items.length && /\b(503|service unavailable|robot check|captcha|access denied|are you a human|unusual traffic)\b/i.test(`${document.title} ${(document.body?.innerText || "").slice(0, 400)}`);
+    return { url: location.href, title: document.title, items, refused, challenge: detectChallenge(), ready: document.readyState === "complete" };
   }
 
   // ------------------------------------------------------------- overlay UI
@@ -1028,6 +1193,10 @@
           challenge: detectChallenge(),
           autofill: detectAutofill(),
         };
+      case "readtext":
+        return readText(cmd.known, cmd.names !== false);
+      case "products":
+        return readProducts();
       case "challenge":
         return detectChallenge();
       case "autofill":

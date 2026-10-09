@@ -219,6 +219,53 @@ export function scrubText(text, secrets, { generic = true } = {}) {
   return s;
 }
 
+/** scrubText that also says what it replaced: [{ tag, key }] (key is unique per value). */
+export function scrubWithReport(text, secrets, { generic = true } = {}) {
+  let s = String(text ?? "");
+  const found = [];
+  for (const { tag, value } of secrets) {
+    const parts = s.split(value);
+    if (parts.length > 1) found.push({ tag, key: tag });
+    s = parts.join(`[${tag}]`);
+  }
+  if (generic) {
+    for (const [re, repl] of GENERIC_PATTERNS) {
+      s = s.replace(re, (m) => {
+        found.push({ tag: repl.slice(1, -1), key: `${repl}${m}` });
+        return repl;
+      });
+    }
+  }
+  return { text: s, found };
+}
+
+/**
+ * Tags for private values the content script found in page text
+ * ({category, vaultTag, value}); one tag per distinct value, longest first.
+ */
+export function tagTextHits(hits, memory) {
+  memory.counters ||= {};
+  memory.valueTags ||= new Map();
+  const out = new Map();
+  for (const h of hits) {
+    if (!h.value || h.value.length < 3 || out.has(h.value)) continue;
+    if (h.vaultTag) {
+      out.set(h.value, h.vaultTag);
+      continue;
+    }
+    const category = normalizeCategory(h.category);
+    const key = `${category}::${h.value}`;
+    let tag = memory.valueTags.get(key);
+    if (!tag) {
+      memory.counters[category] = (memory.counters[category] || 0) + 1;
+      tag = `${category}_${String(memory.counters[category]).padStart(2, "0")}`;
+      memory.valueTags.set(key, tag);
+    }
+    out.set(h.value, tag);
+  }
+  return [...out].map(([value, tag]) => ({ tag, value })).sort((a, b) => b.value.length - a.value.length);
+}
+
 /** Scrub a URL: keep origin + path, drop query/fragment values. */
 export function scrubUrl(url, secrets) {
   try {

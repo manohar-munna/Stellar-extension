@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Stellar — Privacy-First Browser Agent",
   "short_name": "Stellar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Visual browser agent that redacts credentials and personal data into semantic tags before anything reaches the cloud model.",
   "homepage_url": "https://stellarai.site/",
   "icons": {
@@ -22,7 +22,8 @@
     "default_path": "sidepanel/sidepanel.html"
   },
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
   "permissions": [
     "sidePanel",
@@ -30,7 +31,9 @@
     "activeTab",
     "scripting",
     "storage",
-    "debugger"
+    "debugger",
+    "alarms",
+    "notifications"
   ],
   "host_permissions": [
     "<all_urls>"

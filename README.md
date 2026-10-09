@@ -49,6 +49,33 @@ Stellar card in `chrome://extensions`. Settings and the vault are kept.
 | 👁 Presenter mode | Blurs raw captures inside the panel so you can screen-share safely. |
 | ↗ Pop-out | Opens the panel in its own big window for projecting. It drives the last-focused browser window. |
 | Export run | Downloads a JSON log of the run (sanitized frames only, never raw captures or private values). |
+| 📝 **Summarize page** | Summarizes the page you're on in simple words — key points plus a *Watch out for* list (fees, auto-renewal, data sharing). The text is read on-device and private details become tags before anything is sent. |
+| ⚖️ **Compare prices** | Type a product (e.g. *boAt Airdopes 141 under 2000*) and press it. Amazon, Flipkart and Myntra open in background tabs at the same time and you get one table, cheapest first. |
+| ⏰ **Schedule** | Runs a task by itself at a set time — e.g. *“Every morning at 9, check train ticket prices and tell me”*. |
+
+**Privacy report** — every finished task ends with a short report in plain words, e.g.
+*“Hid 3 emails, 1 password and 2 names. Sent 0 private items to the cloud.”* It counts each private item that
+was hidden (by type), the requests sent to Gemini and their leak checks, the steps decided on-device, and warns
+honestly when the cloud vision detector sent raw screenshots. It is also included in *Export run*.
+
+**Summarize page** — works on articles, terms & conditions, docs, any readable page. The panel shows exactly what
+was sent (tagged text only — no screenshot, no links). In the summary shown to you, names and emails are filled
+back in locally; passwords, card and ID numbers stay as tags. Needs Gemini (not available in On-device only mode).
+
+**Compare prices** — stores are picked in Settings → *Price compare* (Amazon, Flipkart, Myntra by default; Ajio,
+Meesho, Snapdeal optional), or named in the text (*“… on Amazon and Myntra”*). A budget (*under 2000*,
+*under 70k*) filters the results. Only the product cards are read from each store — never your account name,
+delivery address or cart. Gemini then picks the real matches (not cases or accessories) from numbered listings
+and writes a one-line verdict; product links stay on your device. Without a key (or in On-device only mode) the
+match is made on-device from the words in the product name. Store tabs close when done; a store that shows a bot
+check or refuses the request is left open for you.
+
+**Schedule** — type the whole sentence in the task box and press ⏰: the time and days are filled in for you
+(*every morning / evening*, *at 9*, *8:30 am*, *weekdays*, *weekends*, *every Monday and Thursday*). Pick Safe or
+Autopilot and, optionally, the page to start on. At the set time Stellar opens a small window beside your browser
+and runs the task in a browser window of its own, then shows the answer as a notification (and keeps it in the
+panel and the schedule list). In Safe mode a risky step waits for you — Stellar notifies you. Chrome must be
+open at the set time; if it was closed, the task runs when Chrome starts (up to 6 hours late).
 
 **Reading the panel**
 
@@ -208,8 +235,8 @@ field before it is saved.
 ## Project layout
 
 ```
-manifest.json            MV3 manifest (side panel, scripting, tabs, storage)
-background.js            opens the side panel on toolbar click / Alt+Shift+S
+manifest.json            MV3 manifest (side panel, scripting, tabs, storage, alarms, notifications)
+background.js            opens the side panel on toolbar click / Alt+Shift+S; fires scheduled tasks
 content/content.js       DOM element tagging, DOM PII detection, action executor, page overlay
 sidepanel/
   sidepanel.html/.css/.js  the live pipeline UI, settings, approvals
@@ -224,6 +251,10 @@ sidepanel/
   local/vlm-worker.js    FastVLM in a Web Worker (WebGPU / WASM)
   local/vlm.js           client: load with progress, generate
   local/planner.js       on-device backup planner
+  report.js              privacy report: counts of what was hidden / sent, in plain words
+  summary.js             Summarize page: on-device text read + tagging, then Gemini
+  compare.js             Compare prices: parallel store tabs, product-card reading, matching
+  schedules.js           scheduled tasks: parsing "every morning at 9", alarms, runner window
 demo/                    offline demo site (fake PII, face photo, forms, bot check) + sample vault files
 icons/                   extension icons
 vendor/                  Transformers.js, ONNX Runtime Web, pdf.js (see vendor/README.md)

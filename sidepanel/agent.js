@@ -287,8 +287,10 @@ export class StellarAgent {
 
   // ------------------------------------------------------------------ run
 
-  async run({ task, mode, lang = "", spoken = false, continueRun = null }) {
+  // runMode / startTabId: a scheduled task's own Safe/Autopilot choice and the tab opened for it.
+  async run({ task, mode, lang = "", spoken = false, continueRun = null, runMode = null, startTabId = null }) {
     this.settings = await loadSettings();
+    if (runMode) this.settings.runMode = runMode;
     this.stopped = false;
     this.running = true;
     this.abort = new AbortController();
@@ -368,7 +370,7 @@ export class StellarAgent {
         }
       }
 
-      let tab = await findTargetTab();
+      let tab = startTabId != null ? await chrome.tabs.get(startTabId).catch(() => null) : await findTargetTab();
       if (tab && NEW_TAB_URL.test(tab.url || tab.pendingUrl || "")) {
         // Chrome blocks every extension on the New Tab page, so start from Google.
         if (snapshot) throw new Error("This is Chrome's New Tab page, which extensions can't read. Open any website and take the snapshot there.");
@@ -881,7 +883,7 @@ function setEditorText(tag, text, clear) {
 // In the side panel the current window is the browser window being driven.
 // When the panel is popped out into its own window, drive the active tab of
 // the most recently focused normal browser window instead.
-async function findTargetTab() {
+export async function findTargetTab() {
   let win = await chrome.windows.getCurrent();
   if (win.type !== "normal") win = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
   if (!win) return null;

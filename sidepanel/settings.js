@@ -42,6 +42,9 @@ export const DEFAULTS = {
   // Adding a file to the vault: "extract" details, "store" the file for
   // upload fields, or "both".
   vaultFileMode: "both",
+  // Price compare: which stores to open, and whether their tabs stay open after.
+  compareShops: ["amazon", "flipkart", "myntra"],
+  compareKeepTabs: false,
   vault: "",
 };
 

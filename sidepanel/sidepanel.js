@@ -1,7 +1,7 @@
 // Side panel UI: renders each pipeline stage as it happens and wires settings.
 // All page/model-derived strings go through textContent (never innerHTML).
 
-import { StellarAgent, describeAction } from "./agent.js";
+import { StellarAgent, describeAction, findTargetTab } from "./agent.js";
 import { loadSettings, saveSettings, DEFAULTS } from "./settings.js";
 import { listModels } from "./gemini.js";
 import { CATEGORY_COLORS } from "./privacy.js";
@@ -9,6 +9,10 @@ import { loadLocalModel, onLocalState, isLocalModelCached, localState, LOCAL_MOD
 import { extractFromFile, mergeIntoVault, VAULT_FIELDS } from "./vault-import.js";
 import { listFiles, putFile, deleteFile, renameFile, guessFileKey, prettySize, fileTag } from "./vault-files.js";
 import { VOICE_LANGS, Listener, speak, stopSpeaking, voiceSupported, identifyLanguage, languageName, fullTag } from "./voice.js";
+import { newReport, addHidden, categoryOfTag, reportText, reportJson } from "./report.js";
+import { summarizeTab } from "./summary.js";
+import { SHOPS, DEFAULT_SHOPS, parseCompareQuery, comparePrices } from "./compare.js";
+import { EVERY_DAY, DAY_NAMES, listSchedules, upsertSchedule, updateSchedule, removeSchedule, armSchedule, describeWhen, describeNext, parseScheduleText, openRunner, createWindowAt } from "./schedules.js";
 
 const $ = (sel) => document.querySelector(sel);
 const STAGES = ["capture", "detect", "redact", "send", "reason", "validate", "execute"];
@@ -383,14 +387,31 @@ function zoneOf(run, stage) {
   return STAGE_META[stage];
 }
 
-function makeRun({ task, snapshot, settings, maxSteps }) {
-  const id = ++runSeq;
-  const title = snapshot ? `Snapshot ${id}` : `Task ${id}`;
+const KIND_TITLE = { summary: "Summary", compare: "Compare" };
+
+// kind: "agent" | "snapshot" | "summary" | "compare". meta: { id, title, schedule } for a scheduled run.
+function makeRun({ task, snapshot, settings, maxSteps, kind = snapshot ? "snapshot" : "agent", meta = null, detail = "" }) {
+  const id = meta?.id ?? ++runSeq;
+  const title = meta?.title || (snapshot ? `Snapshot ${id}` : KIND_TITLE[kind] ? `${KIND_TITLE[kind]} ${id}` : `Task ${id}`);
+  const modeLabel = `${settings.runMode === "autopilot" ? "Autopilot" : "Safe mode"} · ${{ localfirst: "Local-first", auto: "Gemini-first", always: "On-device only", off: "Gemini only" }[settings.localBackup] || ""}`;
+  const label =
+    kind === "snapshot"
+      ? "Snapshot"
+      : kind === "summary"
+        ? "Page summary · private data hidden first"
+        : kind === "compare"
+          ? `Price compare${detail ? ` · ${detail}` : ""}`
+          : meta?.schedule
+            ? `Scheduled · ${describeWhen(meta.schedule)} · ${modeLabel}`
+            : `Task ${id} · ${modeLabel}`;
   const run = {
     id,
     title,
     task,
     snapshot,
+    kind,
+    scheduled: !!meta?.schedule,
+    rep: newReport(),
     vision: settings.detector === "vision",
     pace: settings.pace || "guided",
     maxSteps,
@@ -402,7 +423,7 @@ function makeRun({ task, snapshot, settings, maxSteps }) {
     stats: { tags: new Set(), bytes: 0, leaks: 0 },
     log: {
       task,
-      mode: snapshot ? "snapshot" : "agent",
+      mode: kind,
       startedAt: new Date().toISOString(),
       detector: settings.detector,
       reasonModel: settings.reasonModel,
@@ -416,7 +437,7 @@ function makeRun({ task, snapshot, settings, maxSteps }) {
     h(
       "div",
       { class: "run-h" },
-      h("div", { class: "lbl" }, snapshot ? "Snapshot" : `Task ${id} · ${settings.runMode === "autopilot" ? "Autopilot" : "Safe mode"} · ${{ localfirst: "Local-first", auto: "Gemini-first", always: "On-device only", off: "Gemini only" }[settings.localBackup] || ""}`),
+      h("div", { class: "lbl" }, label),
       h("div", { class: "task" }, snapshot ? task || "Capture → Detect → Redact preview" : task),
       (run.statsEl = h("div", { class: "run-stats" }))
     ),
@@ -500,6 +521,7 @@ function savedCopy(run) {
     title: run.title,
     task: run.task,
     snapshot: run.snapshot,
+    kind: run.kind,
     status: run.status,
     html: clone.innerHTML,
     log: run.log,
@@ -534,11 +556,12 @@ addEventListener("visibilitychange", () => {
 
 /** Rebuild saved tasks; a task that was running when the panel closed is marked stopped. */
 async function restoreRuns() {
-  const saved = (await runStore.all()).sort((a, b) => a.id - b.id);
+  const started = (s) => Date.parse(s.log?.startedAt) || 0;
+  const saved = (await runStore.all()).sort((a, b) => started(a) - started(b) || a.id - b.id);
   if (!saved.length) return;
   $("#intro")?.remove();
   for (const s of saved) {
-    runSeq = Math.max(runSeq, s.id);
+    if (s.id < 1e9) runSeq = Math.max(runSeq, s.id); // scheduled runs use time-based ids
     const el = h("section", { class: "run", "data-run": s.id });
     el.innerHTML = s.html;
     // Approvals, questions and hand-offs from the old session can't be answered any more.
@@ -557,7 +580,7 @@ async function restoreRuns() {
       el.append(h("div", { class: "final bad" }, h("span", { class: "lbl" }, "Stopped"), "The side panel was closed while this task was running. Run it again to continue."));
     }
     const run = {
-      id: s.id, title: s.title, task: s.task, snapshot: s.snapshot, status, restored: true, steps: [], el,
+      id: s.id, title: s.title, task: s.task, snapshot: s.snapshot, kind: s.kind || (s.snapshot ? "snapshot" : "agent"), status, restored: true, steps: [], el,
       log: s.log || {}, statsEl: el.querySelector(".run-stats"), stats: { tags: new Set(), bytes: 0, leaks: 0 },
       agentHistory: s.agentHistory || [], finalMessage: s.finalMessage || (status === "stopped" ? "The side panel was closed while this task was running." : ""), lang: s.lang || "",
     };
@@ -580,7 +603,7 @@ async function restoreRuns() {
     });
     feed.append(el);
     addRunTab(run);
-    if (!run.snapshot) addFollowUp(run);
+    if (run.kind === "agent") addFollowUp(run);
     watchRun(run);
   }
   let pick = null;
@@ -624,6 +647,7 @@ function closeRun(run) {
 }
 
 function setRunStatus(run, status) {
+  if (run.scheduled && status === "waiting" && run.status !== "waiting") callUser(run);
   run.status = status;
   run.dot.className = `sdot ${status}`;
   updateRunStats(run);
@@ -645,6 +669,17 @@ function updateRunStats(run) {
   if (run.restored) return; // a saved copy keeps the stats line it was saved with
   const n = run.steps.length;
   const secs = ((performance.now() - run.t0) / 1000).toFixed(1);
+  if (run.kind === "summary" || run.kind === "compare") {
+    const hidden = Object.values(run.rep.hidden).reduce((t, set) => t + set.size, 0);
+    run.statsEl.textContent = [
+      run.kind === "summary" ? "page summary" : "price compare",
+      `${hidden} private item${hidden === 1 ? "" : "s"} hidden`,
+      run.rep.chars ? `${run.rep.chars.toLocaleString()} chars of tagged text sent` : "nothing sent",
+      `${run.rep.leaksBlocked} leak${run.rep.leaksBlocked === 1 ? "" : "s"}`,
+      `${secs}s`,
+    ].join(" · ");
+    return;
+  }
   const parts = [
     run.snapshot ? "snapshot" : `${n} step${n === 1 ? "" : "s"}`,
     `${run.stats.tags.size} private item${run.stats.tags.size === 1 ? "" : "s"} hidden`,
@@ -759,9 +794,12 @@ const ui = {
       activeRun.el.querySelector(":scope > .followup")?.remove();
       activeRun.log.steps ||= [];
       activeRun.el.append(h("div", { class: "followup-h" }, h("span", { class: "lbl" }, "Follow-up"), task));
+      activeRun.rep = newReport();
       setRunStatus(activeRun, "running");
     } else {
-      activeRun = makeRun({ task, snapshot, settings, maxSteps });
+      const meta = pendingRunMeta;
+      pendingRunMeta = null;
+      activeRun = makeRun({ task, snapshot, settings, maxSteps, meta });
     }
     activeRun.agentHistory = history;
     activeRun.tagMemory = tagMemory;
@@ -862,9 +900,15 @@ const ui = {
 
   /** Fill the step's short brief from a stage's data. */
   brief(run, S, stage, data) {
+    const rep = run.rep;
+    if (rep) rep.touched = true;
     if (stage === "detect") {
       const uniq = uniqueRegions(data.regions);
       uniq.forEach((r) => run.stats.tags.add(r.tag));
+      if (rep) {
+        uniq.forEach((r) => addHidden(rep, r.tag));
+        if (data.mode === "vision" && data.visionMeta) rep.rawFramesSent++;
+      }
       const how = data.mode === "vision" ? "on-device + cloud vision" : "on-device rules + face detection";
       if (uniq.length) setBrief(S, "hidden", "local", "Hidden", `${uniq.length} private item${uniq.length === 1 ? "" : "s"}`, h("span", { class: "chips" }, tagChips(data.regions)));
       else setBrief(S, "hidden", "local", "Hidden", h("span", { class: "dim" }, `nothing private on screen (${how})`));
@@ -879,12 +923,19 @@ const ui = {
       } else {
         S.sendInfo = `${kb(data.bytes)} sanitized frame + ${data.prompt.length.toLocaleString()} chars`;
         S.leakOk = !data.leaks.length;
+        if (rep && S.leakOk) {
+          rep.cloudRequests++;
+          rep.leakChecks++;
+          rep.bytes += data.bytes;
+          rep.chars += data.prompt.length;
+        } else if (rep) rep.leaksBlocked++;
         run.stats.bytes += data.bytes;
         run.stats.leaks += data.leaks.length;
         setBrief(S, "sent", "cloud", "Sent", S.sendInfo, h("span", { class: `pill ${S.leakOk ? "ok" : "bad"}` }, S.leakOk ? "✓ 0 leaks" : "✗ blocked"));
       }
     }
     if (stage === "reason" && data.local) {
+      if (rep) rep.localSteps++;
       if (data.localFirst) setBrief(S, "sent", "local", "Sent", h("span", { class: "dim" }, `nothing — decided on-device by ${data.model}`));
       else if (!data.localOnly) setBrief(S, "sent", "local", "Sent", h("span", { class: "dim" }, `Gemini failed → decided on-device by ${data.model}`));
       if (data.decision?.observation) setBrief(S, "saw", "muted", "Saw", data.decision.observation);
@@ -1070,9 +1121,15 @@ const ui = {
     if (last) summarizeStep(run, last, { collapse: false });
     run.el.append(h("div", { class: `final${ok ? "" : " bad"}` }, h("span", { class: "lbl" }, ok ? "Result" : "Stopped"), message));
     run.log.result = { ok, message, finishedAt: new Date().toISOString() };
+    if (run.rep?.touched) {
+      run.el.append(renderReport(run.rep));
+      run.log.privacyReport = reportJson(run.rep);
+    }
     // What a follow-up sends as context: the tagged answer, not the names shown here.
     run.finalMessage = contextMessage || message;
-    if (!run.snapshot) addFollowUp(run);
+    run.displayMessage = message;
+    this.lastFinished = run;
+    if (run.kind === "agent") addFollowUp(run);
     if (run.spoken) speak(message, run.lang);
     activeRun = null;
     setRunStatus(run, ok ? "done" : "stopped");
@@ -1086,16 +1143,21 @@ const ui = {
 
 const agent = new StellarAgent(ui);
 
+// A summary or price compare in progress (they don't use the agent loop).
+let toolAbort = null;
+const busy = () => agent.running || !!toolAbort;
+
 function setRunning(on) {
   runBtn.disabled = on;
   snapBtn.disabled = on;
+  for (const b of document.querySelectorAll(".tools-row .tool")) if (b.id !== "schedBtn") b.disabled = on;
   stopBtn.hidden = !on;
 }
 
 // ------------------------------------------------------------------ events
 
 function start(mode) {
-  if (agent.running) return;
+  if (busy()) return;
   const task = taskInput.value.trim();
   if (mode === "agent" && !task) {
     ui.status("Type a task first — or use Snapshot to just see redaction.");
@@ -1107,11 +1169,11 @@ function start(mode) {
 }
 
 /** Start a run — or, with continueRun, a follow-up in that task's conversation. */
-function startRun({ task, mode = "agent", spoken = false, lang = null, continueRun = null }) {
-  if (agent.running) return ui.status("Wait for the current task to finish (or press Stop).");
+function startRun({ task, mode = "agent", spoken = false, lang = null, continueRun = null, runMode = null, startTabId = null }) {
+  if (busy()) return Promise.resolve(ui.status("Wait for the current task to finish (or press Stop)."));
   // Answer in the language of the task: the spoken language, or (typed) identified on-device.
   const langP = lang != null ? Promise.resolve(lang) : mode === "agent" ? identifyLanguage(task).then((b) => (b ? fullTag(b) : "")) : Promise.resolve("");
-  langP.then((l) => agent.run({ task, mode, lang: l, spoken, continueRun }).catch((e) => ui.finish({ ok: false, message: e.message || String(e) })));
+  return langP.then((l) => agent.run({ task, mode, lang: l, spoken, continueRun, runMode, startTabId }).catch((e) => ui.finish({ ok: false, message: e.message || String(e) })));
 }
 
 /** "Continue this task" box under a finished task. */
@@ -1213,7 +1275,10 @@ taskInput.addEventListener("input", () => {
 
 runBtn.addEventListener("click", () => start("agent"));
 snapBtn.addEventListener("click", () => start("snapshot"));
-stopBtn.addEventListener("click", () => agent.stop());
+stopBtn.addEventListener("click", () => {
+  agent.stop();
+  toolAbort?.abort();
+});
 taskInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) start("agent");
 });
@@ -1246,6 +1311,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     lightbox.hidden = true;
     $("#settings").hidden = true;
+    $("#schedules").hidden = true;
   }
 });
 
@@ -1305,6 +1371,9 @@ async function openSettings() {
   (document.querySelector(`input[name=vaultFileMode][value=${s.vaultFileMode || "both"}]`) || document.querySelector("input[name=vaultFileMode][value=both]")).checked = true;
   renderVaultFiles();
   $("#maxSteps").value = s.maxSteps;
+  const shops = s.compareShops?.length ? s.compareShops : DEFAULT_SHOPS;
+  document.querySelectorAll("#compareShops input").forEach((c) => (c.checked = shops.includes(c.value)));
+  $("#compareKeepTabs").checked = !!s.compareKeepTabs;
   $("#vault").value = s.vault;
   $("#saveStatus").textContent = "";
   drawer.hidden = false;
@@ -1356,6 +1425,8 @@ $("#saveSettings").addEventListener("click", async () => {
     localUnloadMinutes: Number(document.querySelector("input[name=localUnload]:checked")?.value ?? 10),
     vaultExtract: $("#vaultGemini").checked ? "gemini" : "local",
     maxSteps: Math.max(1, Math.min(50, parseInt($("#maxSteps").value, 10) || 15)),
+    compareShops: [...document.querySelectorAll("#compareShops input:checked")].map((c) => c.value),
+    compareKeepTabs: $("#compareKeepTabs").checked,
     vault: $("#vault").value,
   });
   configureAutoUnload(Number(document.querySelector("input[name=localUnload]:checked")?.value ?? 10));
@@ -1525,10 +1596,469 @@ document.querySelectorAll("input[name=runMode]").forEach((r) =>
   })
 );
 
+// ---------------------------------------------------------- privacy report
+// Shown under every finished task: what was hidden here, what went out.
+
+function renderReport(rep) {
+  const t = reportText(rep);
+  return h(
+    "section",
+    { class: "report" },
+    h("div", { class: "report-h" }, h("span", { class: "shield" }, "🛡"), "Privacy report"),
+    h("p", { class: "report-line" }, h("b", {}, t.hid), " ", h("span", { class: t.sentOk ? "sent-ok" : "sent-bad" }, t.sent)),
+    t.counts.length
+      ? h(
+          "div",
+          { class: "report-grid" },
+          t.counts.map((c) => {
+            const color = CATEGORY_COLORS[c.category] || "#94a3b8";
+            return h("div", { class: "report-tile", style: { borderColor: color + "55", background: color + "12" } }, h("b", { style: { color } }, c.count), h("span", {}, c.label));
+          })
+        )
+      : null,
+    t.facts.length ? h("ul", { class: "report-facts" }, t.facts.map((f) => h("li", { class: f.ok ? "ok" : "bad" }, h("span", { class: "i" }, f.ok ? "✓" : "!"), h("span", {}, f.text)))) : null
+  );
+}
+
+// ------------------------------------------------- summary & price compare
+// One-click tools. They run outside the step-by-step agent loop but use the
+// same task tabs, privacy layer, leak check and privacy report.
+
+const RESTRICTED_PAGE = /^(chrome|edge|brave|about|chrome-extension|devtools|view-source|chrome-search):|^https:\/\/(chrome\.google\.com\/webstore|chromewebstore\.google\.com)/;
+
+function beginToolRun(kind, task, settings, detail = "") {
+  $("#intro")?.remove();
+  const run = makeRun({ task, settings, kind, maxSteps: 0, detail });
+  activeRun = run;
+  selectRun(run);
+  setFollow(true);
+  toolAbort = new AbortController();
+  setRunning(true);
+  return { run, signal: toolAbort.signal };
+}
+
+function endToolRun(result) {
+  toolAbort = null;
+  ui.finish(result);
+}
+
+function toolCard(run, node, zone) {
+  node.classList.add(`zone-${zone}`);
+  append(run.el, node);
+  return node;
+}
+
+function clipText(s, n) {
+  return s.length > n ? `${s.slice(0, n)}\n… (${(s.length - n).toLocaleString()} more characters)` : s;
+}
+
+/** Leak check + exactly what goes to Gemini (tagged text only, no screenshot). */
+function textSendCard(d, title) {
+  const leak = d.leaks.length
+    ? h("div", { class: "leak bad" }, `✗ Leak check failed: ${d.leaks.map((t) => `[${t}]`).join(", ")} in the outbound text — nothing sent`)
+    : h("div", { class: "leak ok" }, `✓ Leak check passed — 0 of ${d.secretCount} locally-known private values in the outbound text`);
+  return card(
+    { title, badge: d.leaks.length ? "local" : "cloud", badgeText: d.leaks.length ? "blocked" : "→ cloud", meta: `${d.chars.toLocaleString()} chars`, cloud: !d.leaks.length },
+    leak,
+    h("div", { class: "note" }, "Text only — no screenshot, no links."),
+    h("details", {}, h("summary", {}, "Exactly what is sent"), h("pre", {}, clipText(d.prompt, 20000)))
+  );
+}
+
+async function runSummary() {
+  if (busy()) return ui.status("Wait for the current task to finish (or press Stop).");
+  const settings = await loadSettings();
+  if (!settings.apiKey) return ui.status("Summaries use Gemini — add your API key in Settings (gear icon) first.");
+  if (settings.localBackup === "always") return ui.status("On-device only mode is on (Settings → On-device model), so nothing may go to the cloud — summaries need Gemini.");
+  const tab = await findTargetTab();
+  if (!tab?.url || RESTRICTED_PAGE.test(tab.url) || /^(chrome-search|about):/.test(tab.url)) return ui.status("Open a web page first — Chrome doesn't let extensions read this one.");
+  const { run, signal } = beginToolRun("summary", `Summarize ${hostOf(tab.url)}`, settings);
+  ui.status("Reading the page on this device…");
+  try {
+    const out = await summarizeTab({
+      tab,
+      settings,
+      signal,
+      rep: run.rep,
+      stages: {
+        read(d) {
+          run.rep.touched = true;
+          toolCard(
+            run,
+            card(
+              { title: "Read the page & hide private data", badge: "local", badgeText: "on-device", meta: `${d.ms} ms` },
+              h("dl", { class: "kv" }, h("dt", {}, "Page"), h("dd", { title: d.url }, hostOf(d.url)), h("dt", {}, "Text"), h("dd", {}, `${d.chars.toLocaleString()} characters${d.truncated ? " (the first part of a long page)" : ""}`)),
+              d.tags.length ? h("div", { class: "tags" }, d.tags.map((t) => tagChip(t, categoryOfTag(t)))) : h("div", { class: "note" }, "No private details found in the text."),
+              h("div", { class: "note" }, "Private values were swapped for tags here, before anything left this computer.")
+            ),
+            "local"
+          );
+          ui.status("Leak-checking and sending the tagged text to Gemini…");
+        },
+        send(d) {
+          toolCard(run, textSendCard(d, "Send tagged page text"), d.leaks.length ? "local" : "cloud");
+        },
+      },
+    });
+    const d = out.display;
+    toolCard(
+      run,
+      card(
+        { title: "Summary", badge: "cloud", badgeText: "cloud", meta: `${out.latencyMs} ms`, cloud: true },
+        h("div", { class: "sum-head" }, d.headline),
+        h("p", { class: "sum-text" }, d.summary),
+        d.key_points.length ? h("div", { class: "sum-sec" }, h("b", {}, "Key points"), h("ul", {}, d.key_points.map((p) => h("li", {}, p)))) : null,
+        d.watch_out.length ? h("div", { class: "sum-sec warn" }, h("b", {}, "⚠ Watch out for"), h("ul", {}, d.watch_out.map((p) => h("li", {}, p)))) : null,
+        h("div", { class: "note" }, `${out.model} · ${usageText(out.usage)} · names filled back in on this device; passwords, cards and ID numbers stay hidden`)
+      ),
+      "cloud"
+    );
+    run.log.summary = out.summary; // tagged version only
+    endToolRun({ ok: true, message: d.headline || "Summary ready.", contextMessage: out.summary.headline });
+  } catch (e) {
+    endToolRun({ ok: false, message: signal.aborted ? "Stopped." : e.message || String(e) });
+  }
+}
+
+const SHOP_STATE = { loading: "loading…", done: "", blocked: "needs you", failed: "failed" };
+
+async function runCompare() {
+  if (busy()) return ui.status("Wait for the current task to finish (or press Stop).");
+  const settings = await loadSettings();
+  const picked = settings.compareShops?.length ? settings.compareShops : DEFAULT_SHOPS;
+  const { query, shops, budget } = parseCompareQuery(taskInput.value, picked);
+  if (!query) {
+    ui.status("Type the product first — e.g. “boAt Airdopes 141 under 2000” — then press Compare prices.");
+    taskInput.focus();
+    return;
+  }
+  const target = await findTargetTab();
+  const names = shops.map((id) => SHOPS.find((s) => s.id === id)?.name).filter(Boolean);
+  const { run, signal } = beginToolRun("compare", `${query}${budget != null ? ` · under ₹${budget.toLocaleString("en-IN")}` : ""}`, settings, names.join(", "));
+  run.rep.touched = true;
+  const rows = new Map();
+  const list = h(
+    "ul",
+    { class: "shops" },
+    shops.map((id) => {
+      const st = h("span", { class: "st" }, "opening…");
+      const li = h("li", { class: "shop loading" }, h("span", { class: "dot" }), h("b", {}, SHOPS.find((s) => s.id === id).name), st);
+      rows.set(id, { li, st });
+      return li;
+    })
+  );
+  toolCard(
+    run,
+    card(
+      { title: "Open the stores side by side", badge: "local", badgeText: "on-device" },
+      list,
+      h("div", { class: "note" }, "Each store opens in a background tab at the same time. Only the product cards are read — not your account, delivery address or cart.")
+    ),
+    "local"
+  );
+  ui.status(`Opening ${names.length} store${names.length === 1 ? "" : "s"} at once…`);
+  try {
+    const out = await comparePrices({
+      query,
+      shopIds: shops,
+      budget,
+      settings,
+      signal,
+      rep: run.rep,
+      windowId: target?.windowId,
+      onShop(id, st) {
+        const r = rows.get(id);
+        if (!r) return;
+        r.li.className = `shop ${st.state}`;
+        r.st.textContent = st.state === "done" ? `${st.count} product${st.count === 1 ? "" : "s"} read` : [SHOP_STATE[st.state], st.detail].filter(Boolean).join(" — ");
+        if ([...rows.values()].every((x) => !x.li.classList.contains("loading"))) ui.status(settings.apiKey && settings.localBackup !== "always" ? "Asking Gemini which listings match…" : "Building the table…");
+      },
+      onSend(d) {
+        toolCard(run, textSendCard(d, "Send numbered listings"), d.leaks.length ? "local" : "cloud");
+      },
+    });
+    run.rep.notes.push("Only product cards were read from the store pages — your account name, delivery address and cart stayed on this device.");
+    if (out.usedAi) run.rep.notes.push("Product links stayed on this device; Gemini saw numbered listings only.");
+    toolCard(run, priceTable(out), out.usedAi ? "cloud" : "local");
+    run.log.compare = { query, budget, shops, rows: out.rows.map(({ shopName, name, price, rating }) => ({ store: shopName, name, price, rating })), verdict: out.verdict };
+    endToolRun({ ok: true, message: out.verdict });
+  } catch (e) {
+    endToolRun({ ok: false, message: signal.aborted ? "Stopped." : e.message || String(e) });
+  }
+}
+
+function priceTable(out) {
+  const money = (r) => r.priceText || `₹${r.price.toLocaleString("en-IN")}`;
+  return card(
+    { title: "Price comparison", badge: out.usedAi ? "cloud" : "local", badgeText: out.usedAi ? "Gemini-picked" : "on-device", meta: `${out.rows.length} of ${out.total} listings`, cloud: out.usedAi },
+    out.aiError ? h("div", { class: "note warn" }, `${out.aiError}.`) : null,
+    out.rows.length
+      ? h(
+          "table",
+          { class: "prices" },
+          h("thead", {}, h("tr", {}, h("th", {}, "Store"), h("th", {}, "Product"), h("th", { class: "num" }, "Price"), h("th", { class: "num" }, "★"))),
+          h(
+            "tbody",
+            {},
+            out.rows.map((r) =>
+              h(
+                "tr",
+                { class: r.best ? "best" : "" },
+                h("td", { class: "store" }, r.shopName),
+                h(
+                  "td",
+                  { class: "prod" },
+                  /^https?:\/\//.test(r.href) ? h("a", { href: r.href, target: "_blank", rel: "noopener noreferrer", title: r.name }, r.name) : r.name,
+                  r.best ? h("span", { class: "best-pill" }, "Cheapest") : null,
+                  r.sponsored ? h("span", { class: "spon" }, "sponsored") : null
+                ),
+                h("td", { class: "num price" }, money(r)),
+                h("td", { class: "num" }, r.rating ? r.rating.toFixed(1) : "—")
+              )
+            )
+          )
+        )
+      : h("div", { class: "note warn" }, "No matching listings — try a shorter product name."),
+    h("div", { class: "note" }, out.usedAi ? `${out.model} picked the real matches from numbered listings (no links, no account details).` : "Matched on this device by the words in your product name.")
+  );
+}
+
+$("#compareShops").append(...SHOPS.map((s) => h("label", { class: "day" }, h("input", { type: "checkbox", value: s.id }), h("span", {}, s.name))));
+$("#sumBtn").addEventListener("click", runSummary);
+$("#cmpBtn").addEventListener("click", runCompare);
+
+// ---------------------------------------------------------- scheduled tasks
+
+const schedDrawer = $("#schedules");
+const schedDays = $("#schedDays");
+let editingSchedule = null;
+
+// Monday first, like most calendars here.
+schedDays.append(
+  ...[1, 2, 3, 4, 5, 6, 0].map((d) => h("label", { class: "day" }, h("input", { type: "checkbox", value: String(d) }), h("span", {}, DAY_NAMES[d])))
+);
+
+function setDays(days) {
+  schedDays.querySelectorAll("input").forEach((c) => (c.checked = days.includes(Number(c.value))));
+}
+function getDays() {
+  return [...schedDays.querySelectorAll("input:checked")].map((c) => Number(c.value)).sort();
+}
+document.querySelectorAll("[data-days]").forEach((b) => b.addEventListener("click", () => setDays(b.dataset.days.split(",").map(Number))));
+
+function fillScheduleForm(s) {
+  editingSchedule = s?.id || null;
+  $("#schedTask").value = s?.task || "";
+  $("#schedTime").value = s?.time || "09:00";
+  setDays(s?.days || EVERY_DAY);
+  $("#schedUrl").value = s?.startUrl || "";
+  $("#schedClose").checked = s?.closeWhenDone !== false;
+  (document.querySelector(`input[name=schedMode][value=${s?.mode === "autopilot" ? "autopilot" : "safe"}]`)).checked = true;
+  $("#schedSave").textContent = editingSchedule ? "Save changes" : "Add schedule";
+  $("#schedFormTitle").textContent = editingSchedule ? "Edit schedule" : "New schedule";
+}
+
+async function openSchedules() {
+  // "Every morning at 9, check train ticket prices and tell me" fills the form.
+  const typed = taskInput.value.trim();
+  const p = parseScheduleText(typed);
+  fillScheduleForm(null);
+  if (typed) {
+    $("#schedTask").value = p.task || typed;
+    if (p.time) $("#schedTime").value = p.time;
+    if (p.days) setDays(p.days);
+  }
+  $("#schedStatus").textContent = p.found ? "Filled in from what you typed — check it, then add." : "";
+  renderSchedules();
+  schedDrawer.hidden = false;
+}
+
+function ago(t) {
+  const m = Math.round((Date.now() - t) / 60000);
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+}
+
+async function renderSchedules() {
+  const box = $("#schedList");
+  const list = await listSchedules();
+  if (!list.length) {
+    box.replaceChildren(h("p", { class: "set-hint" }, "No scheduled tasks yet."));
+    return;
+  }
+  box.replaceChildren(
+    ...list.map((s) =>
+      h(
+        "div",
+        { class: `sched-row${s.enabled === false ? " paused" : ""}` },
+        h(
+          "div",
+          { class: "sched-main" },
+          h("b", {}, s.task),
+          h("small", {}, `${describeWhen(s)} · ${s.mode === "autopilot" ? "Autopilot" : "Safe"} · ${describeNext(s)}`),
+          s.lastResult ? h("div", { class: `sched-last ${s.lastResult.ok ? "ok" : "bad"}` }, `${s.lastResult.ok ? "✓" : "✗"} ${ago(s.lastResult.at)}: ${s.lastResult.message.slice(0, 160)}`) : null
+        ),
+        h(
+          "div",
+          { class: "sched-actions" },
+          h("button", { class: "btn ghost sm", type: "button", title: "Run it now in its own window", onclick: () => openRunner(s.id) }, "Run now"),
+          h(
+            "button",
+            {
+              class: "btn ghost sm",
+              type: "button",
+              onclick: async () => {
+                await armSchedule(await updateSchedule(s.id, { enabled: s.enabled === false }));
+                renderSchedules();
+              },
+            },
+            s.enabled === false ? "Resume" : "Pause"
+          ),
+          h("button", { class: "btn ghost sm", type: "button", onclick: () => fillScheduleForm(s) }, "Edit"),
+          h(
+            "button",
+            {
+              class: "vf-del",
+              type: "button",
+              title: "Delete",
+              onclick: async () => {
+                await removeSchedule(s.id);
+                if (editingSchedule === s.id) fillScheduleForm(null);
+                renderSchedules();
+              },
+            },
+            "×"
+          )
+        )
+      )
+    )
+  );
+}
+
+$("#schedBtn").addEventListener("click", openSchedules);
+$("#closeSchedules").addEventListener("click", () => (schedDrawer.hidden = true));
+schedDrawer.addEventListener("click", (e) => {
+  if (e.target === schedDrawer) schedDrawer.hidden = true;
+});
+$("#schedUseTab").addEventListener("click", async () => {
+  const tab = await findTargetTab();
+  if (/^https?:\/\//.test(tab?.url || "")) $("#schedUrl").value = tab.url;
+  else $("#schedStatus").textContent = "The current tab isn't a web page.";
+});
+
+$("#schedSave").addEventListener("click", async () => {
+  const status = $("#schedStatus");
+  const task = $("#schedTask").value.trim();
+  const days = getDays();
+  let startUrl = $("#schedUrl").value.trim();
+  if (!task) return (status.textContent = "Write the task first.");
+  if (!days.length) return (status.textContent = "Pick at least one day.");
+  if (startUrl && !/^https?:\/\//i.test(startUrl)) startUrl = `https://${startUrl}`;
+  if (startUrl) {
+    try {
+      new URL(startUrl);
+    } catch {
+      return (status.textContent = "That start page isn't a valid web address.");
+    }
+  }
+  const s = {
+    id: editingSchedule || crypto.randomUUID().slice(0, 8),
+    task,
+    time: $("#schedTime").value || "09:00",
+    days,
+    mode: document.querySelector("input[name=schedMode]:checked")?.value || "safe",
+    startUrl,
+    closeWhenDone: $("#schedClose").checked,
+    enabled: true,
+  };
+  await upsertSchedule(s);
+  status.textContent = `Saved ✓ — ${describeNext(s).replace(/^Next: /, "next run ")}.`;
+  fillScheduleForm(null);
+  renderSchedules();
+});
+
+/** A scheduled run is waiting for approval or an answer: bring its window forward. */
+function callUser(run) {
+  chrome.notifications?.create(`stellar-wait-${run.id}`, {
+    type: "basic",
+    iconUrl: chrome.runtime.getURL("icons/icon128.png"),
+    title: "Stellar needs you",
+    message: `A scheduled task is waiting for your approval or answer: ${run.task.slice(0, 120)}`,
+    priority: 2,
+  });
+  chrome.windows.getCurrent().then((w) => chrome.windows.update(w.id, { focused: true, drawAttention: true })).catch(() => {});
+}
+
+let pendingRunMeta = null; // picked up by ui.runStarted for the next run
+
+async function waitForLoad(tabId, ms = 20000) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    const t = await chrome.tabs.get(tabId).catch(() => null);
+    if (!t || t.status === "complete") return;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+}
+
+/** This window was opened to run schedule `id`: run it beside the browser, then report. */
+async function runScheduled(id) {
+  const s = (await listSchedules()).find((x) => x.id === id);
+  if (!s) return ui.status("This scheduled task no longer exists.");
+  document.title = `⏰ ${s.task.slice(0, 40)} — Stellar`;
+  await chrome.storage.session.set({ schedRunning: { id, at: Date.now() } }).catch(() => {});
+  let win = null;
+  try {
+    // A browser window of its own, next to this one, so neither hides the other
+    // (Chrome slows down pages it can't see).
+    const me = await chrome.windows.getCurrent();
+    const base = await chrome.windows.getLastFocused({ windowTypes: ["normal"] }).catch(() => null);
+    const geo = base?.width > me.width + 600 ? { left: base.left, top: base.top, width: base.width - me.width, height: base.height } : {};
+    win = await createWindowAt({ url: s.startUrl || "https://www.google.com/", type: "normal", focused: true }, geo);
+    const tabId = win.tabs[0].id;
+    await waitForLoad(tabId);
+    pendingRunMeta = { id: Date.now(), title: `⏰ ${s.time}`, schedule: s };
+    await startRun({ task: s.task, runMode: s.mode, startTabId: tabId });
+  } catch (e) {
+    ui.status(`Couldn't start the scheduled task: ${e.message}`);
+  }
+  const run = ui.lastFinished;
+  const ok = run?.status === "done";
+  const message = run?.displayMessage || "The scheduled task didn't start.";
+  await updateSchedule(id, { lastRun: Date.now(), lastResult: { ok, at: Date.now(), message: message.slice(0, 500) } });
+  chrome.notifications.create(`stellar-done-${id}-${Date.now()}`, {
+    type: "basic",
+    iconUrl: chrome.runtime.getURL("icons/icon128.png"),
+    title: `${ok ? "✓" : "✗"} ${s.task.slice(0, 70)}`,
+    message: message.slice(0, 300),
+    priority: 1,
+  });
+  try {
+    if (run) localStorage.setItem("stellar.selectedRun", String(run.id));
+  } catch {
+    /* storage unavailable */
+  }
+  if (win && ok && s.closeWhenDone !== false) chrome.windows.remove(win.id).catch(() => {});
+  await chrome.storage.session.remove("schedRunning").catch(() => {});
+  closeCountdown(90);
+}
+
+/** The runner window closes itself a little after the task, unless the user keeps it. */
+function closeCountdown(secs) {
+  const label = h("span", {}, "");
+  const bar = h("div", { class: "close-bar" }, label, h("button", { class: "btn ghost sm", onclick: () => (clearInterval(timer), bar.remove()) }, "Keep open"));
+  const tick = () => {
+    label.textContent = `Done — this window closes in ${secs}s. The result is saved in the Stellar panel.`;
+    if (secs-- <= 0) window.close();
+  };
+  const timer = setInterval(tick, 1000);
+  tick();
+  document.body.append(bar);
+}
+
 // ------------------------------------------------------------------- init
 
 (async () => {
-  restoreRuns();
+  const scheduledId = new URLSearchParams(location.search).get("scheduled");
+  if (!scheduledId) restoreRuns();
   const s = await loadSettings();
   applyPresenter(s.presenter);
   applyTheme(s.theme || "system");
@@ -1541,4 +2071,5 @@ document.querySelectorAll("input[name=runMode]").forEach((r) =>
   if (!s.apiKey) {
     ui.status("Add your Gemini API key in Settings (gear icon) to begin.");
   }
+  if (scheduledId) runScheduled(scheduledId);
 })();

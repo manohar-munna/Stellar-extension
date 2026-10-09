@@ -66,6 +66,11 @@
         <button id="snapBtn" class="btn ghost" title="Capture → Detect → Redact and show the payload that would be sent. No reasoning call.">Snapshot</button>
         <button id="stopBtn" class="btn danger" hidden>Stop</button>
       </div>
+      <div class="tools-row" aria-label="Tools">
+        <button id="sumBtn" class="tool" type="button" title="Summarize the page you're on — private data is hidden before anything is sent">📝 Summarize page</button>
+        <button id="cmpBtn" class="tool" type="button" title="Type a product above, then compare its price across shops at the same time">⚖️ Compare prices</button>
+        <button id="schedBtn" class="tool" type="button" title="Run a task automatically at a set time — e.g. “every morning at 9, check train ticket prices”">⏰ Schedule</button>
+      </div>
       <div id="statusLine" class="status-line" aria-live="polite"></div>
     </section>
 
@@ -86,6 +91,7 @@
             <li><b>Reason</b>: Gemini proposes one action.</li>
             <li><b>Validate</b> locally (allow-list, risky-action approval, tag resolution) and <b>Execute</b>.</li>
           </ol>
+          <p class="hint">One-click tools: <b>Summarize page</b>, <b>Compare prices</b> across shops, and <b>Schedule</b> a task for later. Every task ends with a <b>privacy report</b>.</p>
           <p class="hint">Each task gets its own tab. Every step shows a short brief — what was hidden, what was sent and what the model saw. Click a step (or a segment of its stage bar) for the full detail.</p>
         </div>
       </main>
@@ -237,6 +243,20 @@
           </label>
         </section>
 
+        <!-- ------------------------------------------------------ Price compare -->
+        <section class="set-card">
+          <h3>Price compare</h3>
+          <div class="set-field">
+            <span class="set-label">Stores to check</span>
+            <div id="compareShops" class="days"></div>
+            <p class="set-hint">Naming stores in the task (“… on Amazon and Myntra”) uses just those for that search.</p>
+          </div>
+          <label class="switch-row">
+            <span><b>Keep store tabs open</b><small>Off = the store tabs close once the prices are read. A store that shows a bot check always stays open for you.</small></span>
+            <input id="compareKeepTabs" class="switch" type="checkbox" />
+          </label>
+        </section>
+
         <!-- ------------------------------------------------------ Private vault -->
         <section class="set-card">
           <h3>Private vault</h3>
@@ -274,6 +294,68 @@
           <span id="saveStatus" class="set-status"></span>
           <button id="saveSettings" class="btn primary">Save settings</button>
         </div>
+      </div>
+    </div>
+
+    <div id="schedules" class="drawer" hidden>
+      <div class="drawer-inner">
+        <div class="drawer-h">
+          <h2>Scheduled tasks</h2>
+          <button id="closeSchedules" class="icon-btn" title="Close" aria-label="Close scheduled tasks">✕</button>
+        </div>
+
+        <section class="set-card">
+          <h3 id="schedFormTitle">New schedule</h3>
+          <div class="set-field">
+            <label class="set-label" for="schedTask">Task</label>
+            <textarea id="schedTask" class="input" rows="3" placeholder="Check train ticket prices from Hyderabad to Bengaluru for tomorrow and tell me the cheapest"></textarea>
+          </div>
+          <div class="set-grid">
+            <div class="set-field">
+              <label class="set-label" for="schedTime">Time</label>
+              <input id="schedTime" class="input" type="time" value="09:00" />
+            </div>
+            <div class="set-field">
+              <span class="set-label">Mode</span>
+              <div class="segmented" role="radiogroup" aria-label="Scheduled run mode">
+                <label><input type="radio" name="schedMode" value="safe" checked /><span>Safe</span></label>
+                <label><input type="radio" name="schedMode" value="autopilot" /><span>Autopilot</span></label>
+              </div>
+            </div>
+          </div>
+          <div class="set-field">
+            <span class="set-label">Days</span>
+            <div id="schedDays" class="days"></div>
+            <div class="day-quick">
+              <button class="link" type="button" data-days="0,1,2,3,4,5,6">Every day</button>
+              <button class="link" type="button" data-days="1,2,3,4,5">Weekdays</button>
+              <button class="link" type="button" data-days="0,6">Weekends</button>
+            </div>
+          </div>
+          <div class="set-field">
+            <label class="set-label" for="schedUrl">Start on (optional)</label>
+            <div class="input-row">
+              <input id="schedUrl" class="input" type="url" spellcheck="false" placeholder="https://www.google.com/" />
+              <button id="schedUseTab" class="btn ghost sm" type="button">This page</button>
+            </div>
+            <p class="set-hint">The page the task starts from. Empty = Google.</p>
+          </div>
+          <label class="switch-row">
+            <span><b>Close the task window when done</b><small>The answer still pops up as a notification and is saved in the Stellar panel.</small></span>
+            <input id="schedClose" class="switch" type="checkbox" checked />
+          </label>
+          <p class="set-hint">Safe mode asks before risky steps — if nobody answers, the task waits (Stellar notifies you). Autopilot doesn't ask.</p>
+          <div class="action-row">
+            <button id="schedSave" class="btn primary" type="button">Add schedule</button>
+          </div>
+          <span id="schedStatus" class="set-status"></span>
+        </section>
+
+        <section class="set-card">
+          <h3>Your schedules</h3>
+          <div id="schedList" class="sched-list"></div>
+          <p class="set-hint">Chrome has to be open at the set time. If it was closed, the task runs when Chrome next starts (up to 6 hours late). Each run opens a window beside your browser so you can watch it.</p>
+        </section>
       </div>
     </div>
 
