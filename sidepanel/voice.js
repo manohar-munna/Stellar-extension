@@ -1,10 +1,11 @@
 // Voice: speak a task in any language, hear the result back.
 //
 // - Listening uses Chrome's Web Speech recognition (live text as you speak).
-//   It must be told the language up front, so "Auto" listens in the language
-//   you used last (or the browser's), and when the result is empty or
-//   unsure it asks Gemini to identify the spoken language and transcribe the
-//   clip — then remembers that language for next time.
+//   It must be told the language up front and writes whatever it hears in
+//   that language (Telugu comes out as Hindi if it listened in Hindi). So
+//   "Auto" shows the browser text only as a live preview, then has Gemini
+//   identify the spoken language from the recorded clip and transcribe it,
+//   and remembers that language so the next preview is right too.
 // - The language of any text is identified on-device (Chrome's built-in
 //   LanguageDetector when present, otherwise by script).
 // - Replies are read aloud with the browser's speech synthesis in that language.
@@ -181,8 +182,12 @@ const ID_SCHEMA = {
   required: ["language_code", "transcript"],
 };
 
-/** Gemini identifies the spoken language and transcribes the clip in its native script. */
-export async function identifySpeech(wav, settings) {
+/**
+ * Gemini identifies the spoken language and transcribes the clip. `heard` is
+ * what the browser recognizer produced — it is forced into the language it
+ * was set to, so it can be confidently wrong (Telugu written out as Hindi).
+ */
+export async function identifySpeech(wav, settings, heard = null) {
   const bytes = new Uint8Array(await wav.arrayBuffer());
   let bin = "";
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
@@ -190,8 +195,11 @@ export async function identifySpeech(wav, settings) {
     apiKey: settings.apiKey,
     model: settings.detectModel || settings.reasonModel,
     prompt:
-      "This is a short voice command for a browser assistant. Identify the language spoken and transcribe it exactly, in that language's native script (do not translate). " +
-      "language_code must be a BCP-47 tag with region, e.g. hi-IN, ta-IN, en-IN, es-ES.",
+      "This is a short voice command for a browser assistant. Identify the language the speaker is actually speaking, from the audio, and transcribe it exactly (do not translate).\n" +
+      "- Indian speakers often mix English words (app and site names, 'open', 'search', 'send') into their own language. Decide the language from its own words, verb endings and particles — e.g. 'Wikipedia open chei' / 'open cheyyi' is Telugu, 'open karo' is Hindi, 'open pannu' is Tamil, 'open maadi' is Kannada, 'open cheyyu' is Malayalam, 'open kara' is Marathi.\n" +
+      "- Write the transcript in that language's native script, but keep English words and names in English (Latin letters), as people type them.\n" +
+      (heard?.text ? `- A browser recognizer set to ${languageName(heard.lang)} heard: "${heard.text}". It is forced into that language and is often wrong — trust the audio.\n` : "") +
+      "language_code must be a BCP-47 tag with region, e.g. te-IN, hi-IN, ta-IN, en-IN, es-ES.",
     image: { mimeType: "audio/wav", base64: btoa(bin) },
     schema: ID_SCHEMA,
     temperature: 0,
@@ -267,24 +275,24 @@ export class Listener {
     const wav = this.rec ? await this.rec.stop() : null;
     if (this.error === "not-allowed" || this.error === "service-not-allowed") return this.onError("not-allowed", "Microphone permission is needed.");
     const text = this.finalText.trim();
-    const sure = text && (this.confidence === 0 || this.confidence >= 0.6); // Chrome sometimes reports 0 for confident results
-    if (sure) {
+    // Auto: the browser recognizer can't tell which language was spoken — it
+    // writes everything in the language it listened in, confidently. So the
+    // clip is always checked by Gemini; the browser text was only the preview.
+    if (this.auto && wav && wav.size > 8000) {
+      this.onStatus?.("Identifying the language you spoke…");
+      try {
+        const j = await identifySpeech(wav, this.settings, text ? { text, lang: this.listenLang } : null);
+        if (j?.transcript?.trim()) return this.onDone({ text: j.transcript.trim(), lang: fullTag(j.language_code || this.listenLang), via: "gemini" });
+      } catch (e) {
+        if (!text) return this.onError("identify", `Couldn't identify the language (${e.message}).`);
+        this.onStatus?.(`Couldn't check the language (${e.message}) — using what the browser heard.`);
+      }
+    }
+    if (text) {
       const base = await identifyLanguage(text, this.listenLang);
       const lang = base === baseOf(this.listenLang) ? this.listenLang : fullTag(base);
       return this.onDone({ text, lang, via: "browser" });
     }
-    // Auto: unsure or nothing heard in the guessed language — let Gemini identify it.
-    if (this.auto && wav && wav.size > 8000) {
-      this.onStatus?.("Identifying the language…");
-      try {
-        const j = await identifySpeech(wav, this.settings);
-        if (j?.transcript?.trim()) return this.onDone({ text: j.transcript.trim(), lang: fullTag(j.language_code || "en-IN"), via: "gemini" });
-      } catch (e) {
-        if (text) return this.onDone({ text, lang: this.listenLang, via: "browser" });
-        return this.onError("identify", `Couldn't identify the language (${e.message}).`);
-      }
-    }
-    if (text) return this.onDone({ text, lang: this.listenLang, via: "browser" });
     this.onError(this.error || "no-speech", this.error === "network" ? "Chrome's speech service is unreachable." : "Didn't catch that — try again, or pick your language.");
   }
 }

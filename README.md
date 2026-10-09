@@ -65,9 +65,11 @@ Stellar card in `chrome://extensions`. Settings and the vault are kept.
   **Human verification needed** card and an on-page message, and resumes by itself as soon as the check is
   cleared (or when you click *I’ve done it — continue*). Model actions that target a CAPTCHA widget are blocked.
 - **Voice, any language**: press 🎤 in the task box and speak. Chrome's speech recognition types it live; the
-  run starts 2 s later unless you click the box to edit. *Auto* listens in the language you used last and,
-  when the browser is unsure, asks Gemini to identify the spoken language (then remembers it); or pick a
-  language from the menu. Stellar answers in that language — typed non-English tasks too — and reads its
+  run starts 2 s later unless you click the box to edit. Chrome's recogniser writes everything in the
+  language it listens in (Telugu comes out as Hindi if it listened in Hindi), so with *Auto* its text is only
+  a live preview: Gemini then identifies the spoken language from the clip — including English words mixed
+  into Telugu, Hindi, Tamil… — transcribes it, and Stellar remembers that language. Or pick a language from
+  the menu to skip that check. Stellar answers in that language — typed non-English tasks too — and reads its
   questions and the result aloud with the browser's voice (Settings → Agent). For Local-first, the on-device
   planner gets an English copy of the task. The first time, a tab opens to allow the microphone (the side
   panel can't show that prompt). Note: Chrome's recogniser sends the audio to Google's speech service.
