@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light" data-palette="ocean">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Stellar Agent</title>
     <link rel="stylesheet" href="sidepanel.css" />
+    <link rel="stylesheet" href="theme.css" />
   </head>
   <body>
     <header class="top">
@@ -37,8 +38,8 @@
         <button id="popoutBtn" class="icon-btn" title="Pop out into a large window (for presenting)">
           <svg viewBox="0 0 24 24"><path d="M14 4h6v6" /><path d="M20 4l-9 9" /><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
         </button>
-        <button id="themeBtn" class="icon-btn" title="Theme: system">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><path d="M12 4a8 8 0 0 0 0 16Z" fill="currentColor" /></svg>
+        <button id="themeBtn" class="icon-btn" title="Colours" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.8 1.8-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.8-1.7 1.7-1.7H16a5 5 0 0 0 5-5c0-4-4-7.2-9-7.2Z" /><circle cx="7.5" cy="11" r="1.2" fill="currentColor" /><circle cx="10" cy="7" r="1.2" fill="currentColor" /><circle cx="14.5" cy="7" r="1.2" fill="currentColor" /></svg>
         </button>
         <button id="presenterBtn" class="icon-btn" title="Presenter mode — blur raw captures in this panel" aria-pressed="false">
           <svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></svg>
@@ -417,6 +418,10 @@
 
     <div id="lightbox" class="lightbox" hidden><img alt="" /></div>
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <div id="palettePop" class="palette-pop" hidden role="menu" aria-label="Colours">
+      <div class="pp-h">Colours</div>
+      <div class="pp-grid" id="ppGrid"></div>
+    </div>
 
     <script type="module" src="sidepanel.js"></script>
   </body>

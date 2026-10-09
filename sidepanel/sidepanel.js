@@ -1326,20 +1326,61 @@ popoutBtn.addEventListener("click", () => {
   chrome.windows.create({ url: chrome.runtime.getURL("sidepanel/sidepanel.html?popout=1"), type: "popup", width: 560, height: 960 });
 });
 
-// Theme: follows the OS by default; the header button cycles system → light → dark.
-const THEMES = ["system", "light", "dark"];
+// Colours: light themes (Ocean by default) or Dark, from the palette button.
+const PALETTES = [
+  { id: "ocean", name: "Ocean", dot: "linear-gradient(135deg, #0ea5e9, #2563eb)" },
+  { id: "lavender", name: "Lavender", dot: "linear-gradient(135deg, #8b5cf6, #6366f1)" },
+  { id: "mint", name: "Mint", dot: "linear-gradient(135deg, #10b981, #0d9488)" },
+  { id: "sunset", name: "Sunset", dot: "linear-gradient(135deg, #f97316, #e11d48)" },
+  { id: "rose", name: "Rose", dot: "linear-gradient(135deg, #ec4899, #8b5cf6)" },
+  { id: "dark", name: "Dark", dot: "linear-gradient(135deg, #252935, #0b0c10)" },
+];
 const themeBtn = $("#themeBtn");
-function applyTheme(theme) {
-  if (theme === "system") document.documentElement.removeAttribute("data-theme");
-  else document.documentElement.dataset.theme = theme;
-  themeBtn.dataset.theme = theme;
-  themeBtn.title = `Theme: ${theme} (click to change)`;
+const palettePop = $("#palettePop");
+let look = { theme: "light", palette: "ocean" };
+
+function applyLook({ theme, palette }) {
+  look = { theme: theme === "dark" ? "dark" : "light", palette: PALETTES.some((p) => p.id === palette && p.id !== "dark") ? palette : "ocean" };
+  document.documentElement.dataset.theme = look.theme;
+  document.documentElement.dataset.palette = look.palette;
+  const current = look.theme === "dark" ? "dark" : look.palette;
+  palettePop.querySelectorAll(".pp-sw").forEach((b) => b.classList.toggle("on", b.dataset.palette === current));
+  themeBtn.title = `Colours: ${PALETTES.find((p) => p.id === current).name}`;
 }
-themeBtn.addEventListener("click", async () => {
-  const next = THEMES[(THEMES.indexOf(themeBtn.dataset.theme || "system") + 1) % THEMES.length];
-  applyTheme(next);
-  await saveSettings({ theme: next });
+
+$("#ppGrid").append(
+  ...PALETTES.map((p) =>
+    h(
+      "button",
+      {
+        class: "pp-sw",
+        type: "button",
+        role: "menuitemradio",
+        "data-palette": p.id,
+        onclick: async () => {
+          const next = p.id === "dark" ? { theme: "dark", palette: look.palette } : { theme: "light", palette: p.id };
+          applyLook(next);
+          await saveSettings(next);
+        },
+      },
+      h("i", { class: "dot", style: { background: p.dot } }),
+      p.name
+    )
+  )
+);
+
+function setPaletteOpen(open) {
+  palettePop.hidden = !open;
+  themeBtn.setAttribute("aria-expanded", String(open));
+}
+themeBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  setPaletteOpen(palettePop.hidden);
 });
+document.addEventListener("click", (e) => {
+  if (!palettePop.hidden && !e.target.closest("#palettePop")) setPaletteOpen(false);
+});
+document.addEventListener("keydown", (e) => e.key === "Escape" && setPaletteOpen(false));
 
 // Presenter mode.
 const presenterBtn = $("#presenterBtn");
@@ -2381,7 +2422,7 @@ function closeCountdown(secs) {
   if (!scheduledId) restoreRuns();
   const s = await loadSettings();
   applyPresenter(s.presenter);
-  applyTheme(s.theme || "system");
+  applyLook({ theme: s.theme, palette: s.palette });
   applyRunMode(s.runMode);
   voiceLang.value = s.voiceLang || "auto";
   micBtn.hidden = voiceLang.hidden = !voiceSupported();
