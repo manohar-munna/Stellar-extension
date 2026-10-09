@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 680" width="1600" height="680" font-family="'Segoe UI', system-ui, Roboto, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#1f2a4d"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#0f7a52"/>
+    </marker>
+    <marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#5b3fd6"/>
+    </marker>
+    <filter id="sh" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#1f2a4d" flood-opacity="0.10"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="680" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="40" y="38" font-size="24" font-weight="700" fill="#151b2e">Stellar — one step of a task (Local-first mode)</text>
+  <text x="40" y="62" font-size="14" fill="#5e6478">Repeats until the task is done. Private data never leaves the device; the cloud only sees a redacted frame with tags.</text>
+
+  <!-- Regions -->
+  <rect x="20" y="80" width="1225" height="585" rx="18" fill="#f2f8ff" stroke="#bcd6f5" stroke-width="1.5"/>
+  <text x="42" y="110" font-size="16" font-weight="700" fill="#1d4f91">ON YOUR DEVICE — Chrome extension</text>
+  <text x="42" y="130" font-size="12.5" fill="#4a6a96">nothing goes on the network before redaction</text>
+
+  <rect x="1265" y="80" width="315" height="290" rx="18" fill="#f4f0ff" stroke="#cdbdfa" stroke-width="1.5"/>
+  <text x="1287" y="110" font-size="16" font-weight="700" fill="#4b2fb8">CLOUD — Gemini API</text>
+  <text x="1287" y="130" font-size="12.5" fill="#6a56c4">called directly, no Stellar server</text>
+
+  <!-- Row 1 boxes -->
+  <g filter="url(#sh)">
+    <rect x="50" y="160" width="180" height="120" rx="12" fill="#ffffff" stroke="#9cc2ee"/>
+    <rect x="270" y="160" width="180" height="120" rx="12" fill="#e4f6ec" stroke="#8fd3b0"/>
+    <rect x="600" y="160" width="180" height="120" rx="12" fill="#ffffff" stroke="#9cc2ee"/>
+    <rect x="820" y="160" width="180" height="120" rx="12" fill="#fde9e7" stroke="#f1a59b"/>
+    <rect x="1040" y="160" width="180" height="120" rx="12" fill="#ffffff" stroke="#9cc2ee"/>
+    <rect x="1290" y="160" width="265" height="150" rx="12" fill="#ebe5ff" stroke="#b9a6f7"/>
+  </g>
+
+  <g font-size="15" font-weight="700" fill="#151b2e" text-anchor="middle">
+    <text x="140" y="190">1. Capture &amp; label</text>
+    <text x="360" y="190">2. Decide on-device</text>
+    <text x="690" y="190">3. Detect</text>
+    <text x="910" y="190">4. Redact</text>
+    <text x="1130" y="190">5. Send</text>
+    <text x="1422" y="190">6. Reason (Gemini)</text>
+  </g>
+  <g font-size="12.5" fill="#444b63" text-anchor="middle">
+    <text x="140" y="216">screenshot of the tab</text>
+    <text x="140" y="236">every button / field</text>
+    <text x="140" y="254">gets a tag (BUTTON_05)</text>
+
+    <text x="360" y="216">FastVLM-0.5B on WebGPU</text>
+    <text x="360" y="236">fills known fields,</text>
+    <text x="360" y="254">submits what it filled</text>
+
+    <text x="690" y="216">DOM rules: emails, IDs,</text>
+    <text x="690" y="236">keys, cards, passwords</text>
+    <text x="690" y="254">+ on-device face detector</text>
+
+    <text x="910" y="216">blur faces</text>
+    <text x="910" y="236">black out secrets</text>
+    <text x="910" y="254">mask PII as [EMAIL_01]</text>
+
+    <text x="1130" y="216">leak check first</text>
+    <text x="1130" y="236">sanitized frame +</text>
+    <text x="1130" y="254">tags only</text>
+
+    <text x="1422" y="216">reads the redacted frame</text>
+    <text x="1422" y="236">returns ONE action that</text>
+    <text x="1422" y="254">uses tags, never values;</text>
+    <text x="1422" y="272">also does the final check</text>
+  </g>
+
+  <!-- Decision diamond -->
+  <g filter="url(#sh)">
+    <polygon points="520,175 562,220 520,265 478,220" fill="#fff7e0" stroke="#e7c063"/>
+  </g>
+  <text x="520" y="225" font-size="14" font-weight="700" fill="#7a5600" text-anchor="middle">Sure?</text>
+
+  <!-- Row 1 arrows -->
+  <g stroke="#1f2a4d" stroke-width="2" fill="none" marker-end="url(#a)">
+    <line x1="230" y1="220" x2="266" y2="220"/>
+    <line x1="450" y1="220" x2="474" y2="220"/>
+    <line x1="562" y1="220" x2="596" y2="220"/>
+    <line x1="780" y1="220" x2="816" y2="220"/>
+    <line x1="1000" y1="220" x2="1036" y2="220"/>
+  </g>
+  <text x="580" y="210" font-size="12.5" font-weight="700" fill="#b42318" text-anchor="middle">no</text>
+  <line x1="1220" y1="220" x2="1286" y2="220" stroke="#5b3fd6" stroke-width="2.5" marker-end="url(#ap)"/>
+  <text x="1253" y="208" font-size="11.5" font-weight="700" fill="#5b3fd6" text-anchor="middle">only this</text>
+
+  <!-- yes path -->
+  <line x1="520" y1="265" x2="520" y2="436" stroke="#0f7a52" stroke-width="2.5" marker-end="url(#ag)"/>
+  <text x="532" y="330" font-size="12.5" font-weight="700" fill="#0f7a52">yes — skip 3–6:</text>
+  <text x="532" y="348" font-size="12.5" fill="#0f7a52">no redaction needed,</text>
+  <text x="532" y="366" font-size="12.5" fill="#0f7a52">nothing is sent</text>
+
+  <!-- Row 2 boxes -->
+  <g filter="url(#sh)">
+    <rect x="430" y="440" width="180" height="110" rx="12" fill="#fff7e0" stroke="#e7c063"/>
+    <rect x="170" y="440" width="180" height="110" rx="12" fill="#fff7e0" stroke="#e7c063"/>
+    <rect x="700" y="440" width="520" height="110" rx="12" fill="#ffffff" stroke="#e2c38d" stroke-dasharray="5 4"/>
+  </g>
+  <g font-size="15" font-weight="700" fill="#151b2e" text-anchor="middle">
+    <text x="520" y="470">7. Validate</text>
+    <text x="260" y="470">8. Execute</text>
+  </g>
+  <g font-size="12.5" fill="#444b63" text-anchor="middle">
+    <text x="520" y="494">allowed action, real element,</text>
+    <text x="520" y="512">approvals, injection guard;</text>
+    <text x="520" y="530">tag → real value, locally</text>
+
+    <text x="260" y="494">real mouse &amp; keyboard</text>
+    <text x="260" y="512">on your page (works on</text>
+    <text x="260" y="530">React fields, code editors)</text>
+  </g>
+  <text x="722" y="468" font-size="14" font-weight="700" fill="#9a5b05">Stops for you when needed</text>
+  <g font-size="12.5" fill="#444b63">
+    <text x="722" y="492">• CAPTCHA / bot check — never solved; resumes once you tick it</text>
+    <text x="722" y="512">• a required detail missing from the private vault — asked once, then saved</text>
+    <text x="722" y="532">• a risky action (pay, delete, send) — in Safe mode it asks first</text>
+  </g>
+
+  <!-- Gemini returns an action -->
+  <polyline points="1422,310 1422,605 520,605 520,554" stroke="#5b3fd6" stroke-width="2.5" fill="none" marker-end="url(#ap)"/>
+  <text x="960" y="596" font-size="12.5" fill="#5b3fd6" text-anchor="middle">action with tags, e.g. type "[VAULT_EMAIL]" into INPUT_03</text>
+
+  <!-- Validate -> Execute -->
+  <line x1="430" y1="495" x2="354" y2="495" stroke="#1f2a4d" stroke-width="2" marker-end="url(#a)"/>
+
+  <!-- Loop: next step -->
+  <polyline points="170,495 110,495 110,284" stroke="#1f2a4d" stroke-width="2" fill="none" stroke-dasharray="6 5" marker-end="url(#a)"/>
+  <text x="60" y="385" font-size="12.5" fill="#1f2a4d" transform="rotate(-90 60 385)" text-anchor="middle">next step: fresh screenshot</text>
+
+  <!-- Legend -->
+  <g font-size="12" fill="#5e6478">
+    <rect x="40" y="625" width="14" height="14" rx="3" fill="#e4f6ec" stroke="#8fd3b0"/><text x="60" y="636">on-device AI</text>
+    <rect x="150" y="625" width="14" height="14" rx="3" fill="#fde9e7" stroke="#f1a59b"/><text x="170" y="636">redaction</text>
+    <rect x="245" y="625" width="14" height="14" rx="3" fill="#fff7e0" stroke="#e7c063"/><text x="265" y="636">local checks &amp; actions</text>
+    <rect x="410" y="625" width="14" height="14" rx="3" fill="#ebe5ff" stroke="#b9a6f7"/><text x="430" y="636">cloud (sanitized only)</text>
+  </g>
+</svg>
