@@ -350,7 +350,7 @@
 
   // `known` are the user's vault values ({tag, value}); they are redacted under
   // their own vault tag wherever they appear (e.g. after the agent typed them).
-  function findPiiInString(text, known = [], context = "") {
+  function findPiiInString(text, known = [], context = "", names = []) {
     const hits = [];
     for (const k of known) {
       let i = text.indexOf(k.value);
@@ -358,6 +358,15 @@
         const end = i + k.value.length;
         if (!hits.some((h) => i < h.end && end > h.start)) hits.push({ category: "VAULT", vaultTag: k.tag, start: i, end, value: k.value });
         i = text.indexOf(k.value, end);
+      }
+    }
+    for (const n of names) {
+      let i = text.indexOf(n);
+      while (i >= 0) {
+        const end = i + n.length;
+        const whole = !/[\p{L}\p{N}]/u.test(text[i - 1] || "") && !/[\p{L}\p{N}]/u.test(text[end] || "");
+        if (whole && !hits.some((h) => i < h.end && end > h.start)) hits.push({ category: "PERSON_NAME", start: i, end, value: n });
+        i = text.indexOf(n, end);
       }
     }
     for (const p of PII_PATTERNS) {
@@ -402,9 +411,10 @@
     return null;
   }
 
-  function scanPii(known = []) {
+  function scanPii(known = [], names = []) {
     const found = [];
     known = known.filter((k) => k && typeof k.value === "string" && k.value.length >= 3);
+    names = names.filter((n) => !known.some((k) => k.value === n));
 
     // 1. Form fields: anything typed into a sensitive field is redacted whole.
     for (const el of document.querySelectorAll("input:not([type=hidden]), textarea")) {
@@ -453,18 +463,96 @@
       // The label next to a value (e.g. <dt>Bank account</dt><dd>…</dd>) gives context.
       const p = node.parentElement;
       const label = (p.previousElementSibling?.textContent || "") + " " + (p.getAttribute("aria-label") || "");
-      const hits = findPiiInString(text, known, label.slice(0, 80));
+      const hits = findPiiInString(text, known, label.slice(0, 80), names);
       for (const h of hits) {
         const range = document.createRange();
         range.setStart(node, h.start);
         range.setEnd(node, h.end);
         for (const r of range.getClientRects()) {
           if (r.width < 2 || r.height < 2 || !intersectsViewport(r)) continue;
-          found.push({ category: h.category, vaultTag: h.vaultTag, rect: rectOf(r), value: h.value, source: "dom", detail: h.vaultTag ? "vault value in text" : "page text" });
+          found.push({ category: h.category, vaultTag: h.vaultTag, rect: rectOf(r), value: h.value, source: "dom", detail: h.vaultTag ? "vault value in text" : h.category === "PERSON_NAME" ? "person's name" : "page text" });
         }
       }
     }
     return found;
+  }
+
+  // ------------------------------------------------- people's names
+  // Names are found where sites mark them — links to profiles, "X's profile
+  // picture" labels, author/username fields, "Name <email>" — and then hidden
+  // wherever they appear. Job titles, companies and places stay visible.
+  const PROFILE_HREF =
+    /linkedin\.com\/in\/|youtube\.com\/(?:@|channel\/|c\/|user\/)|\/@[\w.-]+\/?(?:$|\?)|(?:twitter|x)\.com\/(?!home|explore|search|i\/|settings|notifications|messages)[\w]{2,}\/?(?:$|\?)|facebook\.com\/(?!pages|groups|watch|marketplace|events|gaming)[\w.]{3,}\/?(?:$|\?)|instagram\.com\/(?!explore|reels|p\/)[\w.]{2,}\/?(?:$|\?)|github\.com\/(?!features|topics|orgs|settings|marketplace|explore|pulls|issues|notifications|login|signup)[\w-]{2,}\/?(?:$|\?)|\/(?:profile|people|users?|members?|author|authors)\/[\w.-]+/i;
+  const NAME_LABELS = [
+    /^(.{2,60}?)['’]s (?:profile (?:picture|photo|image)|avatar|photo|picture|profile|channel|account)\b/i,
+    /\b(?:profile (?:picture|photo|image) (?:of|for)|photo of|picture of|avatar (?:of|for))\s+(.{2,60}?)\.?$/i,
+    /^(?:view|visit|go to|open)\s+(.{2,60}?)['’]s?\s+(?:profile|channel|page)\b/i,
+    /^Google Account:?\s*(.{2,60}?)\s*\(/i,
+  ];
+  const AUTHOR_SELECTOR =
+    "[rel=author], [itemprop=author], [class*=author i]:not([class*=authorization i]), [class*=username i], [class*=user-name i], [class*=display-name i], [class*=displayname i], [class*=profile-name i], [class*=actor-name i], [class*=actor__name i], [class*=commenter i], [class*=sender-name i], #author-text, ytd-channel-name, [data-testid=User-Name], [data-hovercard-id]";
+  const UI_WORDS = /^(home|profile|my network|network|jobs|messaging|messages|notifications|me|you|follow|following|followers|connect|message|more|see all|view profile|show more|show less|subscribe|subscribed|share|like|comment|repost|send|search|menu|settings|sign in|sign out|log in|log out|join now|premium|post|posts|about|channel|videos|shorts|live|playlists|community|reply|replies|edit|delete|report|open|close|anonymous|unknown|admin|guest|user|author|team|support|the|a|an)$/i;
+
+  function nameLike(raw) {
+    const t = collapse(String(raw || "")).replace(/\s*[·•|].*$/, "").replace(/\s*\(.*\)$/, "").replace(/[✓✔•·]+$/, "").trim();
+    if (t.length < 3 || t.length > 50 || UI_WORDS.test(t)) return null;
+    if (/^@[\w.-]{2,30}$/.test(t)) return t; // a handle
+    if (/@|https?:|www\.|\d{2,}|[!?:;,"]/.test(t)) return null;
+    const words = t.split(" ");
+    if (words.length > 5) return null;
+    if (!/^[\p{L}][\p{L}\p{M}.'’\- ]*$/u.test(t)) return null;
+    // People's names are capitalised (or a single-word handle-like name).
+    if (!words.every((w) => /^[\p{Lu}\p{Lo}]/u.test(w) || /^(de|da|van|von|bin|al|le|la|di|del|dos|du|el)$/i.test(w))) return null;
+    return t;
+  }
+
+  function findNames() {
+    const names = new Set();
+    const add = (n) => {
+      const t = nameLike(n);
+      if (t) names.add(t);
+    };
+    const onScreen = (el) => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && intersectsViewport(r);
+    };
+    // Labels: alt / aria-label / title such as "Priya Raman's profile picture".
+    for (const el of document.querySelectorAll("[aria-label], img[alt], [title]")) {
+      if (names.size > 200) break;
+      if (!onScreen(el)) continue;
+      for (const v of [el.getAttribute("aria-label"), el.getAttribute("alt"), el.getAttribute("title")]) {
+        if (!v || v.length > 200) continue;
+        for (const part of v.split(/,\s*/)) for (const re of NAME_LABELS) {
+          const m = part.trim().match(re);
+          if (m) add(m[1]);
+        }
+      }
+    }
+    // Links to people's profiles: their text is the person's name.
+    for (const a of document.querySelectorAll("a[href]")) {
+      if (names.size > 200) break;
+      if (!PROFILE_HREF.test(a.href) || !onScreen(a)) continue;
+      const lines = (a.innerText || "").split("\n").map((l) => l.trim()).filter(Boolean);
+      if (lines[0]) add(lines[0]);
+      const handle = a.href.match(/\/(@[\w.-]{2,30})/);
+      if (handle) add(handle[1]);
+    }
+    // Author / username / display-name fields.
+    for (const el of document.querySelectorAll(AUTHOR_SELECTOR)) {
+      if (names.size > 200) break;
+      if (!onScreen(el)) continue;
+      const first = (el.innerText || el.textContent || "").split("\n").map((l) => l.trim()).find(Boolean);
+      if (first) add(first);
+    }
+    // "Name <email>" (mail clients, contact lists).
+    const body = (document.body?.innerText || "").slice(0, 60000);
+    for (const m of body.matchAll(/([\p{Lu}][\p{L}.'’-]+(?: [\p{Lu}][\p{L}.'’-]+){0,3})\s*<[^<>\s@]+@[^<>\s]+>/gu)) add(m[1]);
+    // First names on their own ("Message Priya") once the full name is known.
+    for (const n of [...names]) {
+      const first = n.split(" ")[0];
+      if (n.includes(" ") && first.length >= 3 && !UI_WORDS.test(first) && /^\p{Lu}/u.test(first)) names.add(first);
+    }
+    return [...names].sort((a, b) => b.length - a.length);
   }
 
   // Visible images, videos and canvases: where the on-device face detector zooms in.
@@ -932,7 +1020,10 @@
             docH: Math.round(document.documentElement.scrollHeight),
           },
           elements: scanElements(),
-          pii: scanPii(cmd.known),
+          ...(() => {
+            const names = cmd.names === false ? [] : findNames();
+            return { names, pii: scanPii(cmd.known, names) };
+          })(),
           images: scanImages(),
           challenge: detectChallenge(),
           autofill: detectAutofill(),

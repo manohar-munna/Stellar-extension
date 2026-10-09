@@ -28,6 +28,8 @@ export const DEFAULTS = {
   // Unlock browser-autofilled logins with one real click on a blank part of the
   // login form (chrome.debugger, attached for about a second).
   realClick: true,
+  // Hide people's names (others' and your own) behind [NAME_01]-style tags.
+  redactNames: true,
   // Voice: the language you speak ("auto" identifies it), the last language
   // identified, and whether replies to spoken tasks are read aloud.
   voiceLang: "auto",

@@ -67,6 +67,10 @@ Stellar card in `chrome://extensions`. Settings and the vault are kept.
 - **Continue a task**: every finished task ends with a *Continue this task* box. A follow-up runs in the same
   task card with the earlier steps and result as context (“now upload my résumé too”), also after reopening the
   panel.
+- **People's names hidden** (Settings → Privacy, on by default): other people's names on the page — and yours —
+  become tags like `[NAME_02]`. A value keeps the same tag for the whole task (also in your task text, element
+  labels and earlier steps), so Gemini can still say who is who and click "Message" for the right person; job
+  titles, companies and places stay visible. In the answer shown to you, names are filled back in locally.
 - **Files in the private vault**: Settings → Private vault → *Add file…* with a toggle — **Extract details**
   (name, email… into the vault), **Store the file** (kept on this device for upload fields), or **Both** (best
   for a résumé). Stored files appear to the AI only as tags like `[FILE_RESUME]`; Stellar detects upload fields
@@ -144,7 +148,7 @@ typed in locally after validation, and they are redacted again on the next frame
 | # | Stage | Where | Implementation |
 | --- | --- | --- | --- |
 | 1 | **Capture** | on-device | `chrome.tabs.captureVisibleTab` + a DOM scan that tags every visible interactive element (`[BUTTON_03]`, `[INPUT_02]`, `[LINK_07]`…) — Set-of-Marks style. |
-| 2 | **Detect** | on-device | **DOM rules**: password/OTP/card/autofill fields, and regexes over visible text for emails, phones, cards (Luhn-checked), Aadhaar, PAN, API keys/JWTs, and your vault values. **On-device face detection** (MediaPipe BlazeFace, WebAssembly) over the whole frame and zoomed into every visible image. *Optional comparison mode:* Gemini vision also looks for names, addresses and text in images — this sends the unredacted frame, so it is off by default. |
+| 2 | **Detect** | on-device | **DOM rules**: password/OTP/card/autofill fields, and regexes over visible text for emails, phones, cards (Luhn-checked), Aadhaar, PAN, API keys/JWTs, and your vault values. **People's names** found where sites mark them (profile links, "X's profile picture" labels, author/username fields, "Name <email>") and hidden wherever they appear. **On-device face detection** (MediaPipe BlazeFace, WebAssembly) over the whole frame, every visible image, and overlapping tiles of each image — so all faces in a group photo or a YouTube thumbnail are blurred, not just the biggest. *Optional comparison mode:* Gemini vision also looks for names, addresses and text in images — this sends the unredacted frame, so it is off by default. |
 | 3 | **Redact** | on-device | Per PS 26171: **faces blurred** (pixelated + blurred), **passwords, keys, OTPs, cards and IDs blacked out**, **other PII masked** — each stamped with its semantic tag. The same value always gets the same tag. |
 | 4 | **Send** | → cloud | Only the sanitized JPEG + a scrubbed prompt (element labels, scrubbed URL/title, previous actions). A **leak check** blocks the request if any known private value appears in the outbound text. |
 | 5 | **Reason** | cloud | Gemini returns one JSON action: `click / type / select / scroll / press_key / navigate / go_back / wait / done / ask_user`. |

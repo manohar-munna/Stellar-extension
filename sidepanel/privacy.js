@@ -76,7 +76,7 @@ export function box2dToRect(box, viewport) {
  * Identical DOM values share one tag, so the model sees a consistent
  * [EMAIL_01] wherever that address appears.
  */
-export function buildRegions({ domPii = [], vision = [], local = [], viewport }) {
+export function buildRegions({ domPii = [], vision = [], local = [], viewport, memory = null }) {
   const regions = [];
 
   for (const d of domPii) {
@@ -114,8 +114,10 @@ export function buildRegions({ domPii = [], vision = [], local = [], viewport })
   }
 
   regions.sort((a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x);
-  const counters = {};
-  const valueTags = new Map();
+  // With a run-wide memory, a value keeps its tag on every step ([NAME_02] is
+  // the same person throughout the task), so the model's context stays coherent.
+  const counters = memory ? (memory.counters ||= {}) : {};
+  const valueTags = memory ? (memory.valueTags ||= new Map()) : new Map();
   for (const r of regions) {
     if (r.fixedTag) {
       r.tag = r.fixedTag;
@@ -142,6 +144,47 @@ export function parseVault(text) {
     if (!m) continue;
     out.push({ tag: `VAULT_${m[1].toUpperCase().replace(/\s+/g, "_")}`, value: m[2] });
   }
+  // Forms often ask for first and last name separately; derive them from NAME.
+  const name = out.find((v) => v.tag === "VAULT_NAME" || v.tag === "VAULT_FULL_NAME");
+  const parts = name ? name.value.trim().split(/\s+/) : [];
+  if (parts.length >= 2) {
+    if (!out.some((v) => v.tag === "VAULT_FIRST_NAME")) out.push({ tag: "VAULT_FIRST_NAME", value: parts.slice(0, -1).join(" "), derived: true });
+    if (!out.some((v) => v.tag === "VAULT_LAST_NAME")) out.push({ tag: "VAULT_LAST_NAME", value: parts[parts.length - 1], derived: true });
+  }
+  return out;
+}
+
+/**
+ * Tags for people's names found on the page (also those only in labels or
+ * aria text), from the run-wide memory so a person keeps one tag all task.
+ * The user's own vault values keep their [VAULT_…] tags.
+ */
+export function nameSecrets(names = [], memory, vault = []) {
+  const out = [];
+  if (!memory) return out;
+  memory.counters ||= {};
+  memory.valueTags ||= new Map();
+  for (const n of names) {
+    if (!n || n.length < 3 || vault.some((v) => v.value === n)) continue;
+    const key = `NAME::${n}`;
+    let tag = memory.valueTags.get(key);
+    if (!tag) {
+      memory.counters.NAME = (memory.counters.NAME || 0) + 1;
+      tag = `NAME_${String(memory.counters.NAME).padStart(2, "0")}`;
+      memory.valueTags.set(key, tag);
+    }
+    out.push({ tag, value: n });
+  }
+  return out;
+}
+
+/**
+ * Values that can be typed back in for a tag: everything known, including very
+ * short vault answers ("3", "Yes") that are too short to scrub from text safely.
+ */
+export function substitutionSecrets(secrets, vault) {
+  const out = [...secrets];
+  for (const v of vault) if (v.value && !out.some((s) => s.tag === v.tag)) out.push({ tag: v.tag, value: v.value });
   return out;
 }
 

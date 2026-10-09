@@ -5,7 +5,7 @@ import { generateJson } from "./gemini.js";
 import { loadSettings, saveSettings } from "./settings.js";
 import { mergeIntoVault } from "./vault-import.js";
 import { DETECT_PROMPT, DETECT_SCHEMA, AGENT_SYSTEM, ACTION_SCHEMA, buildStepPrompt } from "./prompts.js";
-import { buildRegions, parseVault, knownSecrets, scrubText, scrubUrl, leakCheck, coverage } from "./privacy.js";
+import { buildRegions, parseVault, knownSecrets, nameSecrets, substitutionSecrets, scrubText, scrubUrl, leakCheck, coverage } from "./privacy.js";
 import { loadBitmap, renderDetection, renderSanitized, encodeJpeg } from "./redact.js";
 import { validateAction } from "./validate.js";
 import { localDecide } from "./local/planner.js";
@@ -307,6 +307,9 @@ export class StellarAgent {
     // A follow-up continues the same conversation: same run card, its history kept.
     const history = continueRun?.agentHistory || [];
     const vaultFiles = await listFiles();
+    // Tags stay stable for the whole conversation (also across follow-ups).
+    const tagMemory = continueRun?.tagMemory || { counters: {}, valueTags: new Map() };
+    if (continueRun) continueRun.tagMemory = tagMemory;
     const maxSteps = snapshot ? 1 : Math.max(1, Math.min(50, Number(settings.maxSteps) || 15));
     let consecutiveBlocks = 0;
     const dismissedChecks = new Set(); // check kinds the user waved through this run
@@ -314,10 +317,16 @@ export class StellarAgent {
     const autofillTried = new Set(); // pages where the real-click unlock was tried
     let tabId = null;
 
-    const { stepBase = 0 } = ui.runStarted({ task, snapshot, settings, maxSteps, lang, spoken, history, continueRun }) || {};
+    const { stepBase = 0 } = ui.runStarted({ task, snapshot, settings, maxSteps, lang, spoken, history, continueRun, tagMemory }) || {};
     if (continueRun) {
+      // The shown result has people's names filled back in; tag them again
+      // (and any other remembered value) before it becomes model context.
+      let earlier = String(continueRun.finalMessage || "—");
+      const remembered = [...(tagMemory.valueTags || [])].map(([key, tag]) => [key.slice(key.indexOf("::") + 2), tag]).filter(([v]) => v.length >= 3).sort((a, b) => b[0].length - a[0].length);
+      for (const [value, tag] of remembered) earlier = earlier.split(value).join(`[${tag}]`);
+      earlier = scrubText(earlier, knownSecrets([], vault));
       history.push({
-        text: `The user follows up in the same conversation. Earlier task: "${continueRun.task}". Earlier result: "${continueRun.finalMessage || "—"}". The TASK below is the follow-up; build on what was already done.`,
+        text: `The user follows up in the same conversation. Earlier task: "${continueRun.task}". Earlier result: "${earlier}". The TASK below is the follow-up; build on what was already done.`,
         sig: "followup",
       });
     }
@@ -411,7 +420,7 @@ export class StellarAgent {
         const t0 = performance.now();
         await this.cs(tabId, { op: "overlay", visible: false });
         await sleep(40);
-        let scan = await this.cs(tabId, { op: "scan", known: vault });
+        let scan = await this.cs(tabId, { op: "scan", known: vault, names: settings.redactNames !== false });
         const rawDataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
         await this.cs(tabId, { op: "overlay", visible: true, message: snapshot ? "Stellar snapshot" : `Stellar · step ${step}` });
         const bitmap = await loadBitmap(rawDataUrl);
@@ -450,7 +459,7 @@ export class StellarAgent {
           if (unlocked) {
             ui.note(`Chrome had autofilled ${scan.autofill.fields.map((f) => `"${f}"`).join(", ")} but was hiding the values. Stellar made one real click on a blank part of the form (${unlocked.on}, at ${unlocked.x},${unlocked.y}) and Chrome released them — the password itself is never read or sent.`);
             history.push({ text: `Step ${step}: the browser's saved login was autofilled into ${scan.autofill.fields.join(", ")}; it is now usable. Treat these fields as filled — do not ask for them or retype them.`, sig: "autofill" });
-            scan = await this.cs(tabId, { op: "scan", known: vault });
+            scan = await this.cs(tabId, { op: "scan", known: vault, names: settings.redactNames !== false });
           }
         }
         if (!snapshot && scan.autofill?.pending && !dismissedAutofill) {
@@ -500,7 +509,7 @@ export class StellarAgent {
           }
           this.checkStop();
           if (pick) {
-            const vaultSecrets = knownSecrets([], vault);
+            const vaultSecrets = knownSecrets(nameSecrets(scan.names, tagMemory, vault), vault);
             // Step history can reach Gemini later, so labels are scrubbed of vault values and known patterns.
             elements = labelled.map((e) => ({ ...e, label: scrubText(e.name, vaultSecrets) }));
             secrets = vaultSecrets;
@@ -553,8 +562,9 @@ export class StellarAgent {
         } catch (e) {
           ui.note(`On-device face detector unavailable (${String(e.message || e).slice(0, 100)}) — faces on this frame are not blurred.`);
         }
-        regions = buildRegions({ domPii: scan.pii, vision, local: faces, viewport: scan.viewport });
-        secrets = knownSecrets(regions, vault);
+        regions = buildRegions({ domPii: scan.pii, vision, local: faces, viewport: scan.viewport, memory: tagMemory });
+        // People's names that are only in labels/aria text get the same stable tags.
+        secrets = knownSecrets([...regions, ...nameSecrets(scan.names, tagMemory, vault)], vault);
         const detectCanvas = renderDetection(bitmap, scan.viewport, regions);
         await ui.card(S, "detect", {
           ms: Math.round(performance.now() - t1),
@@ -686,7 +696,13 @@ export class StellarAgent {
 
         if (proposed.type === "done") {
           ui.setStage(null);
-          ui.finish({ ok: true, message: proposed.final_answer || decision.status || "Task complete." });
+          // People's names come back for display only, here on this device —
+          // Gemini wrote [NAME_03]; you read the name. Other tags stay tags.
+          const nameOf = new Map();
+          for (const [key, tag] of tagMemory.valueTags || []) if (key.startsWith("NAME::")) nameOf.set(tag, key.slice(6));
+          const tagged = String(proposed.final_answer || decision.status || "Task complete.");
+          const answer = tagged.replace(/\[(NAME_\d+)\]/g, (m, t) => nameOf.get(t) || m);
+          ui.finish({ ok: true, message: answer, contextMessage: tagged });
           return;
         }
         const vaultKey = String(proposed.vault_key || "").toUpperCase().replace(/^VAULT_/, "").replace(/[^A-Z0-9_]/g, "_").replace(/^_+|_+$/g, "");
@@ -727,7 +743,8 @@ export class StellarAgent {
         const v = await validateAction(proposed, {
           inspect: (tag) => this.cs(tabId, { op: "inspect", tag }),
           elements,
-          secrets,
+          // Short vault answers ("3", "Yes") can be typed back too.
+          secrets: substitutionSecrets(secrets, vault),
           settings,
           history,
           vaultFiles,

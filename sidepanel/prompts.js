@@ -65,6 +65,7 @@ export const AGENT_SYSTEM = `You are Stellar, a privacy-first browser automation
 Each turn you receive a SANITIZED screenshot of the visible part of the page:
 - Private data was removed on-device and replaced by dark boxes containing semantic tags such as [EMAIL_01], [PASSWORD_01], [CARD_01], [NAME_02]. You cannot see their contents. Never guess, reconstruct or ask for them; refer to them by tag.
 - Interactive elements are outlined with a coloured label such as BUTTON_03, LINK_12, INPUT_02. The same elements are listed as text. Use these tags as targets.
+- People's names are hidden as tags like [NAME_01]; the same tag means the same person for the whole task (also in the task text and earlier steps). Refer to, compare and click people by their tag; to type a person's name, type their tag.
 - To enter private data the user stored locally, type its vault tag (e.g. "[VAULT_EMAIL]"). The local client substitutes the real value after validation; you never see it. You may also type a page tag like [EMAIL_01] to re-enter a value visible on the page.
 
 Choose exactly ONE next action:
@@ -119,6 +120,12 @@ export const ACTION_SCHEMA = {
   propertyOrdering: ["observation", "thought", "status", "action"],
 };
 
+/** "PDF", "Word document", "image" — never the file name (it often contains the user's name). */
+function fileKind(f) {
+  const n = `${f.type || ""} ${f.name || ""}`.toLowerCase();
+  return /pdf/.test(n) ? "PDF" : /word|\.docx?/.test(n) ? "Word document" : /^image\//.test(f.type || "") ? "image" : "file";
+}
+
 export function buildStepPrompt({ task, step, maxSteps, page, regions, vaultTags, vaultFiles = [], elements, history, userLang = "" }) {
   const lines = [];
   lines.push(`TASK: ${task}`);
@@ -137,7 +144,7 @@ export function buildStepPrompt({ task, step, maxSteps, page, regions, vaultTags
   } else lines.push("- none");
   lines.push("");
   lines.push(`VAULT TAGS: ${vaultTags.length ? vaultTags.map((t) => `[${t}]`).join(", ") : "none"}`);
-  lines.push(`VAULT FILES (stored documents for upload fields — you never see their contents): ${vaultFiles.length ? vaultFiles.map((f) => `[FILE_${f.key}] ${f.name}`).join(", ") : "none"}`);
+  lines.push(`VAULT FILES (stored documents for upload fields — you never see their contents): ${vaultFiles.length ? vaultFiles.map((f) => `[FILE_${f.key}] (${fileKind(f)})`).join(", ") : "none"}`);
   lines.push("");
   lines.push("INTERACTIVE ELEMENTS (tag, kind, label, state):");
   if (!elements.length) lines.push("- none visible");
@@ -150,7 +157,7 @@ export function buildStepPrompt({ task, step, maxSteps, page, regions, vaultTags
     if (e.disabled) state.push("disabled");
     if (e.sensitive) state.push("sensitive-field");
     if (e.required) state.push("required");
-    if (e.kind === "UPLOAD") state.push(e.fileName ? `file attached: ${e.fileName}` : "no file attached");
+    if (e.kind === "UPLOAD") state.push(e.fileName ? "a file is attached" : "no file attached");
     if (e.editor) state.push("CODE EDITOR — use type with the complete code; it replaces everything in the editor");
     if (e.options?.length) state.push(`options: ${e.options.slice(0, 8).map((o) => `"${o}"`).join(", ")}${e.options.length > 8 ? ", …" : ""}; selected: "${e.selected}"`);
     lines.push(`- ${e.tag} "${e.label}"${state.length ? ` (${state.join(", ")})` : ""}`);

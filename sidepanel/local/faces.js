@@ -30,7 +30,8 @@ function getDetector() {
     {
       baseOptions: { modelAssetPath: chrome.runtime.getURL("vendor/mediapipe/blaze_face_short_range.tflite"), delegate: "CPU" },
       runningMode: "IMAGE",
-      minDetectionConfidence: 0.5,
+      // A little lower than the default: a missed face leaks, a false one only blurs.
+      minDetectionConfidence: 0.4,
     }
   ).catch((e) => {
     detectorP = null;
@@ -46,21 +47,37 @@ function iou(a, b) {
   return inter / (a.w * a.h + b.w * b.h - inter || 1);
 }
 
-/** Run the detector on a region of the bitmap (device px), scaled to `target` px on its long side. */
-function detectIn(det, bitmap, sx, sy, sw, sh, target) {
+/**
+ * Run the detector on a region of the bitmap (device px), scaled to `target` px
+ * on its long side. With `inner` (the image the tile was cut from), faces cut
+ * off by a tile edge inside that image are dropped — a neighbouring tile sees
+ * them whole — and `minScore` filters weak tile hits.
+ */
+function detectIn(det, bitmap, sx, sy, sw, sh, target, { inner = null, minScore = 0 } = {}) {
   const k = target / Math.max(sw, sh);
   const c = document.createElement("canvas");
   c.width = Math.max(1, Math.round(sw * k));
   c.height = Math.max(1, Math.round(sh * k));
   c.getContext("2d").drawImage(bitmap, sx, sy, sw, sh, 0, 0, c.width, c.height);
   const res = det.detect(c);
-  return (res.detections || []).map((d) => ({
-    x: sx + d.boundingBox.originX / k,
-    y: sy + d.boundingBox.originY / k,
-    w: d.boundingBox.width / k,
-    h: d.boundingBox.height / k,
-    score: d.categories?.[0]?.score ?? 0,
-  }));
+  const margin = 0.03 * Math.max(sw, sh);
+  return (res.detections || [])
+    .map((d) => ({
+      x: sx + d.boundingBox.originX / k,
+      y: sy + d.boundingBox.originY / k,
+      w: d.boundingBox.width / k,
+      h: d.boundingBox.height / k,
+      score: d.categories?.[0]?.score ?? 0,
+    }))
+    .filter((f) => {
+      if (f.score < minScore) return false;
+      if (!inner) return true;
+      const cutLeft = sx > inner.x + 1 && f.x < sx + margin;
+      const cutTop = sy > inner.y + 1 && f.y < sy + margin;
+      const cutRight = sx + sw < inner.x + inner.w - 1 && f.x + f.w > sx + sw - margin;
+      const cutBottom = sy + sh < inner.y + inner.h - 1 && f.y + f.h > sy + sh - margin;
+      return !(cutLeft || cutTop || cutRight || cutBottom);
+    });
 }
 
 /**
@@ -80,10 +97,14 @@ export async function detectFaces(bitmap, viewport, images = []) {
   found.push(...detectIn(det, bitmap, 0, 0, bitmap.width, bitmap.height, 1280));
 
   // 2. Each visible image, zoomed so small avatars are large enough to detect.
+  //    BlazeFace looks at a small square, so in a wide thumbnail or a group
+  //    photo every face ends up tiny. Overlapping square tiles (and half-size
+  //    tiles for big images) give each face enough pixels — all of them are found.
   const crops = images
     .filter((r) => r.w >= 24 && r.h >= 24)
     .sort((a, b) => b.w * b.h - a.w * a.h)
     .slice(0, MAX_CROPS);
+  let budget = MAX_TILE_RUNS;
   for (const r of crops) {
     const sx = Math.max(0, r.x * s);
     const sy = Math.max(0, r.y * s);
@@ -91,23 +112,69 @@ export async function detectFaces(bitmap, viewport, images = []) {
     const sh = Math.min(bitmap.height - sy, r.h * s);
     if (sw < 16 || sh < 16) continue;
     found.push(...detectIn(det, bitmap, sx, sy, sw, sh, 320));
+    const side = Math.min(sw, sh);
+    const sizes = [];
+    if (Math.max(sw, sh) / side >= 1.25 || side >= 120 * s) sizes.push(side);
+    if (side >= 180 * s) sizes.push(side / 2);
+    if (side >= 420 * s) sizes.push(side / 3);
+    for (const size of sizes) {
+      for (const t of tiles(sx, sy, sw, sh, size)) {
+        if (budget-- <= 0) break;
+        found.push(...detectIn(det, bitmap, t.x, t.y, t.size, t.size, 256, { inner: { x: sx, y: sy, w: sw, h: sh }, minScore: 0.55 }));
+      }
+    }
   }
 
-  // Back to CSS px, padded to cover hair and chin, de-duplicated.
-  const faces = [];
+  // Merge detections of the same face (seen whole and in tiles), keep the best.
+  const kept = [];
   for (const f of found.sort((a, b) => b.score - a.score)) {
+    if (kept.some((g) => iou(g, f) > 0.3 || overlapShare(f, g) > 0.6 || sameFace(f, g))) continue;
+    kept.push(f);
+  }
+
+  // Back to CSS px, padded to cover hair and chin.
+  const faces = kept.map((f) => ({
+    category: "FACE",
     // BlazeFace boxes the eyes-to-chin area: widen it and extend upward to
     // cover forehead and hair, a little downward for the chin.
-    const rect = {
+    rect: {
       x: Math.round((f.x - f.w * 0.22) / s),
       y: Math.round((f.y - f.h * 0.5) / s),
       w: Math.round((f.w * 1.44) / s),
       h: Math.round((f.h * 1.65) / s),
-    };
-    if (faces.some((g) => iou(g.rect, rect) > 0.35)) continue;
-    faces.push({ category: "FACE", rect, score: f.score, detail: `face (${Math.round(f.score * 100)}%)` });
-  }
+    },
+    score: f.score,
+    detail: `face (${Math.round(f.score * 100)}%)`,
+  }));
   return { faces, ms: Math.round(performance.now() - t0) };
+}
+
+const MAX_TILE_RUNS = 260;
+
+/** Overlapping (50%) square tiles of `size` covering a rect. */
+function tiles(x, y, w, h, size) {
+  const out = [];
+  const step = size / 2;
+  const xs = [];
+  const ys = [];
+  for (let tx = x; tx < x + w - step * 0.5; tx += step) xs.push(Math.min(tx, x + w - size));
+  for (let ty = y; ty < y + h - step * 0.5; ty += step) ys.push(Math.min(ty, y + h - size));
+  for (const ty of [...new Set(ys.map(Math.round))]) for (const tx of [...new Set(xs.map(Math.round))]) out.push({ x: Math.max(x, tx), y: Math.max(y, ty), size });
+  return out;
+}
+
+/** Two boxes whose centres are within ~half a face of each other are one face. */
+function sameFace(a, b) {
+  const dx = a.x + a.w / 2 - (b.x + b.w / 2);
+  const dy = a.y + a.h / 2 - (b.y + b.h / 2);
+  return Math.hypot(dx, dy) < 0.6 * Math.max(a.w, a.h, b.w, b.h);
+}
+
+/** Share of a's area that lies inside b. */
+function overlapShare(a, b) {
+  const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+  const iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  return (ix * iy) / (a.w * a.h || 1);
 }
 
 /** Warm the WASM runtime and model so the first frame isn't slower. */

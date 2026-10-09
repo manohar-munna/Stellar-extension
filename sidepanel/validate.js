@@ -97,7 +97,7 @@ export async function validateAction(proposed, { inspect, elements, secrets, set
       }
       action.file = key;
       displayText = `[FILE_${key}]`;
-      pass(`[FILE_${key}] is ${file.name} — sent from this device straight to the page, never to the AI`);
+      pass(`[FILE_${key}] (${file.name}) goes from this device straight to the page, never to the AI`);
       if (settings.askRisky) confirm(`Upload your file "${file.name}" to this website?`);
     }
 

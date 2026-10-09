@@ -106,6 +106,21 @@ export function parseText(text, source) {
     const m = all.match(/(?:birth|dob|d\.o\.b)[^\n\d]{0,20}([0-9][0-9/.\- A-Za-z]{6,18}\d)/i);
     if (m) addField(out, "DOB", m[1], source);
   }
+  // A résumé or CV starts with the person's name: the first short line of
+  // two to four capitalised words (no digits, @, or section words).
+  if (!out.some((f) => f.key === "NAME")) {
+    const first = lines.slice(0, 4).find((l) => /^[A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){1,3}$/.test(l) && !/\b(resume|résumé|curriculum|vitae|cv|profile|summary|experience|education|skills|contact)\b/i.test(l));
+    if (first) addField(out, "NAME", first, `${source} (top line)`);
+  }
+  // A city/PIN line such as "Pune, Maharashtra 411001".
+  if (!out.some((f) => f.key === "PINCODE")) {
+    const m = all.match(/\b([A-Z][a-z]+)(?:,\s*([A-Z][a-z]+(?: [A-Z][a-z]+)?))?\s+(\d{6})\b/);
+    if (m) {
+      addField(out, "PINCODE", m[3], source);
+      if (!out.some((f) => f.key === "CITY")) addField(out, "CITY", m[1], source);
+      if (m[2] && !out.some((f) => f.key === "STATE")) addField(out, "STATE", m[2], source);
+    }
+  }
   return out;
 }
 

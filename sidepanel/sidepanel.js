@@ -749,7 +749,7 @@ function removePlaceholders(run) {
 // ---------------------------------------------------------------------- ui
 
 const ui = {
-  runStarted({ task, snapshot, settings, maxSteps, lang, spoken, history, continueRun }) {
+  runStarted({ task, snapshot, settings, maxSteps, lang, spoken, history, continueRun, tagMemory }) {
     $("#intro")?.remove();
     let stepBase = 0;
     if (continueRun && runs.includes(continueRun)) {
@@ -764,6 +764,7 @@ const ui = {
       activeRun = makeRun({ task, snapshot, settings, maxSteps });
     }
     activeRun.agentHistory = history;
+    activeRun.tagMemory = tagMemory;
     activeRun.lang = lang;
     activeRun.spoken = spoken && settings.speakReplies !== false;
     selectRun(activeRun);
@@ -1056,7 +1057,7 @@ const ui = {
     for (const d of [...dwellers]) d();
   },
 
-  finish({ ok, message }) {
+  finish({ ok, message, contextMessage }) {
     const run = activeRun;
     if (!run) {
       this.status(message);
@@ -1069,7 +1070,8 @@ const ui = {
     if (last) summarizeStep(run, last, { collapse: false });
     run.el.append(h("div", { class: `final${ok ? "" : " bad"}` }, h("span", { class: "lbl" }, ok ? "Result" : "Stopped"), message));
     run.log.result = { ok, message, finishedAt: new Date().toISOString() };
-    run.finalMessage = message;
+    // What a follow-up sends as context: the tagged answer, not the names shown here.
+    run.finalMessage = contextMessage || message;
     if (!run.snapshot) addFollowUp(run);
     if (run.spoken) speak(message, run.lang);
     activeRun = null;
@@ -1295,6 +1297,7 @@ async function openSettings() {
   document.querySelector(`input[name=localBackup][value=${s.localBackup || "localfirst"}]`).checked = true;
   $("#localPreload").checked = s.localPreload !== false;
   $("#realClick").checked = s.realClick !== false;
+  $("#redactNames").checked = s.redactNames !== false;
   $("#speakReplies").checked = s.speakReplies !== false;
   (document.querySelector(`input[name=localUnload][value="${s.localUnloadMinutes ?? 10}"]`) || document.querySelector("input[name=localUnload][value='10']")).checked = true;
   $("#vaultGemini").checked = s.vaultExtract === "gemini";
@@ -1348,6 +1351,7 @@ $("#saveSettings").addEventListener("click", async () => {
     localBackup: document.querySelector("input[name=localBackup]:checked")?.value || "localfirst",
     localPreload: $("#localPreload").checked,
     realClick: $("#realClick").checked,
+    redactNames: $("#redactNames").checked,
     speakReplies: $("#speakReplies").checked,
     localUnloadMinutes: Number(document.querySelector("input[name=localUnload]:checked")?.value ?? 10),
     vaultExtract: $("#vaultGemini").checked ? "gemini" : "local",
