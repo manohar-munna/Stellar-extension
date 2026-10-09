@@ -1112,7 +1112,7 @@ micBtn.addEventListener("click", async () => {
     lastLang: s.lastVoiceLang,
     onStatus: (t) => ui.status(t),
     onInterim: (t) => (taskInput.value = t),
-    onDone: async ({ text, lang, via }) => {
+    onDone: async ({ text, lang, via, note }) => {
       voiceState.listener = null;
       setListening(false);
       taskInput.value = text;
@@ -1121,7 +1121,8 @@ micBtn.addEventListener("click", async () => {
       await saveSettings({ lastVoiceLang: lang });
       if (agent.running) return ui.status(`Heard (${languageName(lang)}).`);
       // Hands-free: run shortly unless the user starts editing.
-      ui.status(`Heard in ${languageName(lang)}${via === "gemini" ? " (identified by Gemini)" : ""} — running in 2 s… click the box to edit instead.`);
+      const how = via === "gemini" ? " (language identified by Gemini)" : note ? ` (browser only — ${note}; pick your language in the menu if this is wrong)` : "";
+      ui.status(`Heard in ${languageName(lang)}${how} — running in 2 s… click the box to edit instead.`);
       voiceState.timer = setTimeout(() => {
         voiceState.timer = null;
         start("agent");

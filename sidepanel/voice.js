@@ -133,38 +133,41 @@ export const stopSpeaking = () => self.speechSynthesis?.cancel();
 
 // ------------------------------------------------------------ listen
 
-/** Records the microphone as 16 kHz mono WAV (for the Gemini language fallback). */
-class WavRecorder {
+/**
+ * Records the microphone and returns 16 kHz mono WAV (for the Gemini language
+ * check). MediaRecorder is used because a live AudioContext created outside a
+ * click starts suspended (autoplay policy) and would record silence; the
+ * OfflineAudioContext that decodes and resamples has no such restriction.
+ */
+export class WavRecorder {
   async start() {
     this.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
-    this.ctx = new AudioContext();
-    const src = this.ctx.createMediaStreamSource(this.stream);
-    this.proc = this.ctx.createScriptProcessor(4096, 1, 1);
-    this.chunks = [];
-    this.proc.onaudioprocess = (e) => {
-      if (this.chunks.length < 600) this.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
-    };
-    src.connect(this.proc);
-    this.proc.connect(this.ctx.destination);
+    this.parts = [];
+    this.mr = new MediaRecorder(this.stream);
+    this.mr.ondataavailable = (e) => e.data.size && this.parts.push(e.data);
+    this.mr.start(250);
   }
 
   async stop() {
-    this.proc?.disconnect();
-    this.stream?.getTracks().forEach((t) => t.stop());
-    const rate = this.ctx?.sampleRate || 48000;
-    await this.ctx?.close().catch(() => {});
-    const total = (this.chunks || []).reduce((n, c) => n + c.length, 0);
-    if (!total) return null;
-    const ratio = rate / 16000;
-    const out = new Int16Array(Math.floor(total / ratio));
-    let i = 0;
-    let pos = 0;
-    const flat = new Float32Array(total);
-    for (const c of this.chunks) {
-      flat.set(c, pos);
-      pos += c.length;
+    if (!this.mr) return null;
+    if (this.mr.state !== "inactive") {
+      await new Promise((resolve) => {
+        this.mr.onstop = resolve;
+        this.mr.stop();
+      });
     }
-    for (; i < out.length; i++) out[i] = Math.max(-1, Math.min(1, flat[Math.floor(i * ratio)])) * 0x7fff;
+    this.stream.getTracks().forEach((t) => t.stop());
+    const recorded = new Blob(this.parts, { type: this.mr.mimeType || "audio/webm" });
+    if (recorded.size < 2000) return null;
+    let audio;
+    try {
+      audio = await new OfflineAudioContext(1, 16000, 16000).decodeAudioData(await recorded.arrayBuffer());
+    } catch {
+      return null;
+    }
+    const pcm = audio.getChannelData(0).subarray(0, 16000 * 30); // 30 s is plenty for a command
+    const out = new Int16Array(pcm.length);
+    for (let i = 0; i < pcm.length; i++) out[i] = Math.max(-1, Math.min(1, pcm[i])) * 0x7fff;
     const buf = new ArrayBuffer(44 + out.length * 2);
     const v = new DataView(buf);
     const str = (o, s) => [...s].forEach((ch, k) => v.setUint8(o + k, ch.charCodeAt(0)));
@@ -229,6 +232,7 @@ export class Listener {
       } catch (e) {
         this.rec = null;
         if (e?.name === "NotAllowedError") return this.onError("not-allowed", "Microphone permission is needed.");
+        this.skipWhy = `couldn't record the clip (${e?.message || e})`;
       }
     }
     const r = (this.r = new SR());
@@ -278,20 +282,24 @@ export class Listener {
     // Auto: the browser recognizer can't tell which language was spoken — it
     // writes everything in the language it listened in, confidently. So the
     // clip is always checked by Gemini; the browser text was only the preview.
-    if (this.auto && wav && wav.size > 8000) {
+    let skipWhy = this.skipWhy || "";
+    if (this.auto && !this.settings.apiKey) skipWhy = "no Gemini key";
+    else if (this.auto && !skipWhy && !wav) skipWhy = "the recorded clip was empty";
+    if (this.auto && wav) {
       this.onStatus?.("Identifying the language you spoke…");
       try {
         const j = await identifySpeech(wav, this.settings, text ? { text, lang: this.listenLang } : null);
         if (j?.transcript?.trim()) return this.onDone({ text: j.transcript.trim(), lang: fullTag(j.language_code || this.listenLang), via: "gemini" });
+        skipWhy = "Gemini returned no transcript";
       } catch (e) {
         if (!text) return this.onError("identify", `Couldn't identify the language (${e.message}).`);
-        this.onStatus?.(`Couldn't check the language (${e.message}) — using what the browser heard.`);
+        skipWhy = `Gemini check failed: ${e.message}`;
       }
     }
     if (text) {
       const base = await identifyLanguage(text, this.listenLang);
       const lang = base === baseOf(this.listenLang) ? this.listenLang : fullTag(base);
-      return this.onDone({ text, lang, via: "browser" });
+      return this.onDone({ text, lang, via: "browser", note: this.auto ? skipWhy : "" });
     }
     this.onError(this.error || "no-speech", this.error === "network" ? "Chrome's speech service is unreachable." : "Didn't catch that — try again, or pick your language.");
   }

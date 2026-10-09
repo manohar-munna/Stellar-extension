@@ -120,7 +120,10 @@ export const ACTION_SCHEMA = {
 export function buildStepPrompt({ task, step, maxSteps, page, regions, vaultTags, elements, history, userLang = "" }) {
   const lines = [];
   lines.push(`TASK: ${task}`);
-  if (userLang) lines.push(`USER LANGUAGE: ${userLang} — write "status", "final_answer" and any ask_user question in ${userLang}. Keep element tags, [TAGS] and on-page text as they are.`);
+  if (userLang) {
+    lines.push(`USER LANGUAGE: ${userLang} — write "status", "final_answer" and any ask_user question in ${userLang}. Keep element tags, [TAGS] and on-page text as they are.`);
+    lines.push(`- When the task opens or searches a site that has language editions (Wikipedia, news sites, Google), use the ${userLang} edition (e.g. navigate to the ${userLang} Wikipedia) unless the task names another language; if the current tab is in a different language, switch first. Search terms go in ${userLang}.`);
+  }
   lines.push(`STEP: ${step} of max ${maxSteps}`);
   lines.push(`PAGE: "${page.title}" — ${page.url}`);
   lines.push(`VIEWPORT: ${page.viewport.w}x${page.viewport.h}, scrolled ${page.viewport.scrollY}px of ${page.viewport.docH}px total height`);
