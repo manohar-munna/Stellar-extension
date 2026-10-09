@@ -53,6 +53,18 @@ Stellar card in `chrome://extensions`. Settings and the vault are kept.
 | ⚖️ **Compare prices** | Type a product (e.g. *boAt Airdopes 141 under 2000*) and press it. Amazon, Flipkart and Myntra open in background tabs at the same time and you get one table, cheapest first. |
 | ⏰ **Schedule** | Runs a task by itself at a set time — e.g. *“Every morning at 9, check train ticket prices and tell me”*. |
 
+**Getting around**
+
+- **Home screen**: connect Gemini right there (paste the key, press *Connect*), try a tool with one click, tap
+  an example task, or re-run a **recent** task. It comes back when you close the last task tab.
+- **Keyboard**: <kbd>/</kbd> jumps to the task box, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> runs, <kbd>↑</kbd>/<kbd>↓</kbd>
+  in an empty box steps through recent tasks.
+- **Under every result**: *Copy*, *↻ Run again*, and on a price comparison *⏰ Watch price daily* (a price watch
+  that compares at the set time and notifies you with the cheapest).
+- **After a summary**: *Ask about this page* — follow-up questions answered from the same tagged text, with the
+  same leak check; the privacy report updates.
+- **Settings** save as you change them, with section tabs at the top to jump around.
+
 **Privacy report** — every finished task ends with a short report in plain words, e.g.
 *“Hid 3 emails, 1 password and 2 names. Sent 0 private items to the cloud.”* It counts each private item that
 was hidden (by type), the requests sent to Gemini and their leak checks, the steps decided on-device, and warns

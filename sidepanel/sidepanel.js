@@ -3,14 +3,14 @@
 
 import { StellarAgent, describeAction, findTargetTab } from "./agent.js";
 import { loadSettings, saveSettings, DEFAULTS } from "./settings.js";
-import { listModels } from "./gemini.js";
+import { listModels, parseKeys } from "./gemini.js";
 import { CATEGORY_COLORS } from "./privacy.js";
 import { loadLocalModel, onLocalState, isLocalModelCached, localState, LOCAL_MODEL, configureAutoUnload } from "./local/vlm.js";
 import { extractFromFile, mergeIntoVault, VAULT_FIELDS } from "./vault-import.js";
 import { listFiles, putFile, deleteFile, renameFile, guessFileKey, prettySize, fileTag } from "./vault-files.js";
 import { VOICE_LANGS, Listener, speak, stopSpeaking, voiceSupported, identifyLanguage, languageName, fullTag } from "./voice.js";
 import { newReport, addHidden, categoryOfTag, reportText, reportJson } from "./report.js";
-import { summarizeTab } from "./summary.js";
+import { summarizeTab, askAboutPage } from "./summary.js";
 import { SHOPS, DEFAULT_SHOPS, parseCompareQuery, comparePrices } from "./compare.js";
 import { EVERY_DAY, DAY_NAMES, listSchedules, upsertSchedule, updateSchedule, removeSchedule, armSchedule, describeWhen, describeNext, parseScheduleText, openRunner, createWindowAt } from "./schedules.js";
 
@@ -400,7 +400,7 @@ function makeRun({ task, snapshot, settings, maxSteps, kind = snapshot ? "snapsh
       : kind === "summary"
         ? "Page summary · private data hidden first"
         : kind === "compare"
-          ? `Price compare${detail ? ` · ${detail}` : ""}`
+          ? `${meta?.schedule ? `Price watch · ${describeWhen(meta.schedule)}` : "Price compare"}${detail ? ` · ${detail}` : ""}`
           : meta?.schedule
             ? `Scheduled · ${describeWhen(meta.schedule)} · ${modeLabel}`
             : `Task ${id} · ${modeLabel}`;
@@ -559,7 +559,7 @@ async function restoreRuns() {
   const started = (s) => Date.parse(s.log?.startedAt) || 0;
   const saved = (await runStore.all()).sort((a, b) => started(a) - started(b) || a.id - b.id);
   if (!saved.length) return;
-  $("#intro")?.remove();
+  hideHome();
   for (const s of saved) {
     if (s.id < 1e9) runSeq = Math.max(runSeq, s.id); // scheduled runs use time-based ids
     const el = h("section", { class: "run", "data-run": s.id });
@@ -643,7 +643,10 @@ function closeRun(run) {
   run.tab.remove();
   runs.splice(runs.indexOf(run), 1);
   if (selectedRun === run) selectRun(runs[runs.length - 1] || null);
-  if (!runs.length) runbar.hidden = true;
+  if (!runs.length) {
+    runbar.hidden = true;
+    showHome();
+  }
 }
 
 function setRunStatus(run, status) {
@@ -785,7 +788,7 @@ function removePlaceholders(run) {
 
 const ui = {
   runStarted({ task, snapshot, settings, maxSteps, lang, spoken, history, continueRun, tagMemory }) {
-    $("#intro")?.remove();
+    hideHome();
     let stepBase = 0;
     if (continueRun && runs.includes(continueRun)) {
       // A follow-up continues in the same task card, below the last result.
@@ -1119,7 +1122,7 @@ const ui = {
     const last = run.steps[run.steps.length - 1];
     if (last && !ok && !last.result) last.result = { kind: "bad", text: message };
     if (last) summarizeStep(run, last, { collapse: false });
-    run.el.append(h("div", { class: `final${ok ? "" : " bad"}` }, h("span", { class: "lbl" }, ok ? "Result" : "Stopped"), message));
+    run.el.append(h("div", { class: `final${ok ? "" : " bad"}` }, h("span", { class: "lbl" }, ok ? "Result" : "Stopped"), h("span", { class: "msg" }, message), resultActions(run, ok)));
     run.log.result = { ok, message, finishedAt: new Date().toISOString() };
     if (run.rep?.touched) {
       run.el.append(renderReport(run.rep));
@@ -1171,6 +1174,7 @@ function start(mode) {
 /** Start a run — or, with continueRun, a follow-up in that task's conversation. */
 function startRun({ task, mode = "agent", spoken = false, lang = null, continueRun = null, runMode = null, startTabId = null }) {
   if (busy()) return Promise.resolve(ui.status("Wait for the current task to finish (or press Stop)."));
+  if (mode === "agent" && !continueRun && !startTabId) rememberTask(task);
   // Answer in the language of the task: the spoken language, or (typed) identified on-device.
   const langP = lang != null ? Promise.resolve(lang) : mode === "agent" ? identifyLanguage(task).then((b) => (b ? fullTag(b) : "")) : Promise.resolve("");
   return langP.then((l) => agent.run({ task, mode, lang: l, spoken, continueRun, runMode, startTabId }).catch((e) => ui.finish({ ok: false, message: e.message || String(e) })));
@@ -1375,8 +1379,9 @@ async function openSettings() {
   document.querySelectorAll("#compareShops input").forEach((c) => (c.checked = shops.includes(c.value)));
   $("#compareKeepTabs").checked = !!s.compareKeepTabs;
   $("#vault").value = s.vault;
-  $("#saveStatus").textContent = "";
+  $("#saveStatus").textContent = "Changes save automatically.";
   drawer.hidden = false;
+  drawer.querySelector(".drawer-inner").dispatchEvent(new Event("scroll"));
 }
 
 $("#settingsBtn").addEventListener("click", openSettings);
@@ -1410,7 +1415,8 @@ $("#testKey").addEventListener("click", async () => {
   }
 });
 
-$("#saveSettings").addEventListener("click", async () => {
+/** Everything in the drawer, saved as one patch. */
+async function saveAllSettings() {
   await saveSettings({
     apiKey: $("#apiKey").value.trim(),
     reasonModel: $("#reasonModel").value.trim() || DEFAULTS.reasonModel,
@@ -1430,9 +1436,60 @@ $("#saveSettings").addEventListener("click", async () => {
     vault: $("#vault").value,
   });
   configureAutoUnload(Number(document.querySelector("input[name=localUnload]:checked")?.value ?? 10));
-  $("#saveStatus").textContent = "Saved ✓";
-  setTimeout(() => (drawer.hidden = true), 500);
+  refreshSetup();
+}
+
+// Settings save as you change them; "Done" just closes the drawer.
+let autosaveTimer = 0;
+function autosave(delay) {
+  clearTimeout(autosaveTimer);
+  $("#saveStatus").textContent = "Saving…";
+  autosaveTimer = setTimeout(async () => {
+    await saveAllSettings();
+    $("#saveStatus").textContent = "Saved ✓";
+  }, delay);
+}
+drawer.addEventListener("change", (e) => {
+  if (e.target.closest("#vaultReview, #vaultFiles, #vaultFile")) return;
+  autosave(150);
 });
+drawer.addEventListener("input", (e) => {
+  if (e.target.matches("input[type=text], input[type=password], input[type=number], input:not([type]), textarea") && !e.target.closest("#vaultReview, #vaultFiles")) autosave(700);
+});
+$("#saveSettings").addEventListener("click", async () => {
+  if (autosaveTimer) {
+    clearTimeout(autosaveTimer);
+    await saveAllSettings();
+  }
+  drawer.hidden = true;
+});
+
+// Section tabs: jump to a section; the one in view is highlighted.
+const setNav = $("#setNav");
+setNav.addEventListener("click", (e) => {
+  const a = e.target.closest("a[href^='#']");
+  if (!a) return;
+  e.preventDefault();
+  const target = drawer.querySelector(a.getAttribute("href"));
+  const inner = drawer.querySelector(".drawer-inner");
+  const offset = drawer.querySelector(".drawer-h").offsetHeight + setNav.offsetHeight + 8;
+  inner.scrollTo({ top: target.offsetTop - offset, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+});
+drawer.querySelector(".drawer-inner").addEventListener(
+  "scroll",
+  () => {
+    const inner = drawer.querySelector(".drawer-inner");
+    const line = inner.scrollTop + drawer.querySelector(".drawer-h").offsetHeight + setNav.offsetHeight + 40;
+    let current = null;
+    for (const a of setNav.querySelectorAll("a")) {
+      const sec = drawer.querySelector(a.getAttribute("href"));
+      if (sec && sec.offsetTop <= line) current = a;
+    }
+    if (inner.scrollTop + inner.clientHeight >= inner.scrollHeight - 4) current = setNav.querySelector("a:last-child");
+    setNav.querySelectorAll("a").forEach((a) => a.classList.toggle("on", a === (current || setNav.firstElementChild)));
+  },
+  { passive: true }
+);
 
 // ------------------------------------------------------------ on-device model
 
@@ -1626,9 +1683,9 @@ function renderReport(rep) {
 
 const RESTRICTED_PAGE = /^(chrome|edge|brave|about|chrome-extension|devtools|view-source|chrome-search):|^https:\/\/(chrome\.google\.com\/webstore|chromewebstore\.google\.com)/;
 
-function beginToolRun(kind, task, settings, detail = "") {
-  $("#intro")?.remove();
-  const run = makeRun({ task, settings, kind, maxSteps: 0, detail });
+function beginToolRun(kind, task, settings, detail = "", meta = null) {
+  hideHome();
+  const run = makeRun({ task, settings, kind, maxSteps: 0, detail, meta });
   activeRun = run;
   selectRun(run);
   setFollow(true);
@@ -1714,7 +1771,9 @@ async function runSummary() {
       "cloud"
     );
     run.log.summary = out.summary; // tagged version only
+    run.pageContext = out.context; // memory only — lets the user ask about the page
     endToolRun({ ok: true, message: d.headline || "Summary ready.", contextMessage: out.summary.headline });
+    addAskBox(run);
   } catch (e) {
     endToolRun({ ok: false, message: signal.aborted ? "Stopped." : e.message || String(e) });
   }
@@ -1722,11 +1781,12 @@ async function runSummary() {
 
 const SHOP_STATE = { loading: "loading…", done: "", blocked: "needs you", failed: "failed" };
 
-async function runCompare() {
+/** args: { query, shops, budget } to repeat a comparison; otherwise read from the task box. */
+async function runCompare(args = null, meta = null) {
   if (busy()) return ui.status("Wait for the current task to finish (or press Stop).");
   const settings = await loadSettings();
   const picked = settings.compareShops?.length ? settings.compareShops : DEFAULT_SHOPS;
-  const { query, shops, budget } = parseCompareQuery(taskInput.value, picked);
+  const { query, shops, budget } = args?.query ? { budget: null, ...args, shops: args.shops?.length ? args.shops : picked } : parseCompareQuery(taskInput.value, picked);
   if (!query) {
     ui.status("Type the product first — e.g. “boAt Airdopes 141 under 2000” — then press Compare prices.");
     taskInput.focus();
@@ -1734,7 +1794,8 @@ async function runCompare() {
   }
   const target = await findTargetTab();
   const names = shops.map((id) => SHOPS.find((s) => s.id === id)?.name).filter(Boolean);
-  const { run, signal } = beginToolRun("compare", `${query}${budget != null ? ` · under ₹${budget.toLocaleString("en-IN")}` : ""}`, settings, names.join(", "));
+  const { run, signal } = beginToolRun("compare", `${query}${budget != null ? ` · under ₹${budget.toLocaleString("en-IN")}` : ""}`, settings, names.join(", "), meta);
+  run.compareArgs = { query, shops, budget };
   run.rep.touched = true;
   const rows = new Map();
   const list = h(
@@ -1824,8 +1885,249 @@ function priceTable(out) {
 }
 
 $("#compareShops").append(...SHOPS.map((s) => h("label", { class: "day" }, h("input", { type: "checkbox", value: s.id }), h("span", {}, s.name))));
-$("#sumBtn").addEventListener("click", runSummary);
-$("#cmpBtn").addEventListener("click", runCompare);
+$("#sumBtn").addEventListener("click", () => runSummary());
+$("#cmpBtn").addEventListener("click", () => runCompare());
+
+// ---------------------------------------------------------- result actions
+// Copy / Run again / Watch price under every result. Buttons are found by
+// data-act, so the same handler serves tasks restored from an earlier session.
+
+function resultActions(run, ok) {
+  const b = (act, label, title) => h("button", { class: "act", type: "button", "data-act": act, title }, label);
+  const acts = [b("copy", "Copy", "Copy the result")];
+  if (run.kind !== "snapshot" || ok) acts.push(b("again", "↻ Run again", "Run the same task again"));
+  if (run.kind === "compare" && ok) acts.push(b("watch", "⏰ Watch price daily", "Compare these prices again every day and get notified"));
+  return h("div", { class: "final-actions" }, acts);
+}
+
+function runOf(el) {
+  const id = el.closest(".run")?.dataset.run;
+  return runs.find((r) => String(r.id) === id);
+}
+
+feed.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".final-actions [data-act]");
+  if (!btn) return;
+  const run = runOf(btn);
+  if (!run) return;
+  const act = btn.dataset.act;
+  if (act === "copy") {
+    const text = btn.closest(".final").querySelector(".msg")?.textContent || "";
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("Copied");
+    } catch {
+      toast("Couldn't copy — select the text instead");
+    }
+    return;
+  }
+  if (busy()) return toast("Wait for the current task to finish");
+  const cmp = run.compareArgs || run.log?.compare;
+  if (act === "watch" && cmp) return openSchedules({ kind: "compare", query: cmp.query, shops: cmp.shops, budget: cmp.budget });
+  if (act !== "again") return;
+  if (run.kind === "summary") return runSummary();
+  if (run.kind === "compare" && cmp) return runCompare({ query: cmp.query, shops: cmp.shops, budget: cmp.budget });
+  if (run.kind === "snapshot") return start("snapshot");
+  startRun({ task: run.task });
+});
+
+/** "Ask about this page" under a summary: same tagged page text, same leak check. */
+function addAskBox(run) {
+  const input = h("textarea", { class: "input", rows: 1, placeholder: "Ask about this page — e.g. “Can I cancel any time?”" });
+  const form = h(
+    "form",
+    {
+      class: "followup ask",
+      onsubmit: async (e) => {
+        e.preventDefault();
+        const question = input.value.trim();
+        if (!question) return input.focus();
+        if (busy()) return toast("Wait for the current task to finish");
+        input.value = "";
+        await askPage(run, question);
+      },
+    },
+    input,
+    h("button", { class: "btn primary sm", type: "submit" }, "Ask")
+  );
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      form.requestSubmit();
+    }
+  });
+  run.el.append(form);
+}
+
+async function askPage(run, question) {
+  const settings = await loadSettings();
+  activeRun = run;
+  selectRun(run);
+  toolAbort = new AbortController();
+  const signal = toolAbort.signal;
+  setRunning(true);
+  setRunStatus(run, "running");
+  const box = h("div", { class: "qa" }, h("div", { class: "q" }, question), h("div", { class: "a" }, h("span", { class: "spinner sm" }), "Thinking…"));
+  run.el.querySelector(":scope > .ask")?.before(box);
+  glideTo(box);
+  ui.status("Leak-checking your question and asking Gemini…");
+  let ok = true;
+  try {
+    const out = await askAboutPage({ context: run.pageContext, question, settings, signal, rep: run.rep });
+    box.querySelector(".a").replaceChildren(out.display, h("span", { class: "qa-meta" }, `${out.model} · tagged page text only · leak check passed`));
+  } catch (e) {
+    ok = false;
+    box.querySelector(".a").replaceChildren(h("span", { class: "bad" }, signal.aborted ? "Stopped." : e.message || String(e)));
+  }
+  run.el.querySelector(":scope > .report")?.replaceWith(renderReport(run.rep));
+  toolAbort = null;
+  activeRun = null;
+  setRunStatus(run, ok ? "done" : "stopped");
+  setRunning(false);
+  ui.status("");
+}
+
+// ------------------------------------------------------------------- toast
+
+let toastTimer = 0;
+function toast(text) {
+  const t = $("#toast");
+  t.textContent = text;
+  t.hidden = false;
+  t.classList.remove("out");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    t.classList.add("out");
+    toastTimer = setTimeout(() => (t.hidden = true), 250);
+  }, 1800);
+}
+
+// -------------------------------------------------------------------- home
+// The start screen: connect Gemini, try a tool, re-run a recent task. It
+// comes back when the last task tab is closed.
+
+const home = $("#intro");
+function hideHome() {
+  home.hidden = true;
+}
+function showHome() {
+  renderRecent();
+  home.hidden = false;
+}
+
+async function refreshSetup() {
+  const s = await loadSettings();
+  $("#setupCard").hidden = !!s.apiKey || s.localBackup === "always";
+}
+
+$("#setupSave").addEventListener("click", async () => {
+  const key = $("#setupKey").value.trim();
+  const status = $("#setupStatus");
+  if (!parseKeys(key).length) return (status.textContent = "Paste your key first.");
+  status.className = "set-status";
+  status.textContent = "Checking the key…";
+  try {
+    const { models } = await listModels(key);
+    await saveSettings({ apiKey: key });
+    status.className = "set-status ok";
+    status.textContent = `✓ Connected — ${models.length} model${models.length === 1 ? "" : "s"} available.`;
+    $("#setupKey").value = "";
+    ui.status("");
+    toast("Gemini connected");
+    setTimeout(refreshSetup, 1200);
+  } catch (err) {
+    status.className = "set-status bad";
+    status.textContent = `✗ ${err.message}`;
+  }
+});
+$("#setupKey").addEventListener("keydown", (e) => e.key === "Enter" && $("#setupSave").click());
+
+home.addEventListener("click", (e) => {
+  const tryBtn = e.target.closest("[data-try]");
+  if (tryBtn) {
+    const what = tryBtn.dataset.try;
+    if (what === "summary") return runSummary();
+    if (what === "snapshot") return start("snapshot");
+    if (what === "schedule") return openSchedules();
+    if (what === "compare") {
+      if (taskInput.value.trim()) return runCompare();
+      setTask("boAt Airdopes 141 under 2000");
+      taskInput.select();
+      ui.status("Type the product you want (or keep the example), then press ⚖️ Compare prices.");
+      $("#cmpBtn").classList.add("nudge");
+      setTimeout(() => $("#cmpBtn").classList.remove("nudge"), 2400);
+      return;
+    }
+  }
+  const ex = e.target.closest("[data-task]");
+  if (ex) {
+    setTask(ex.dataset.task);
+    taskInput.focus();
+    ui.status("Press Run agent (or Ctrl+Enter) to start — edit the task first if you like.");
+  }
+});
+
+// Recent tasks: the last few typed tasks, on this device only.
+const RECENT_KEY = "stellar.recent";
+function recentTasks() {
+  try {
+    return JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+function rememberTask(task) {
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify([task, ...recentTasks().filter((t) => t !== task)].slice(0, 6)));
+  } catch {
+    /* storage unavailable */
+  }
+}
+function renderRecent() {
+  const list = recentTasks();
+  $("#recentBox").hidden = !list.length;
+  $("#recentList").replaceChildren(
+    ...list.map((t) =>
+      h(
+        "div",
+        { class: "recent-row" },
+        h("button", { class: "recent-t", type: "button", title: "Put this task in the box", onclick: () => (setTask(t), taskInput.focus()) }, t),
+        h("button", { class: "recent-run", type: "button", title: "Run it again", "aria-label": "Run again", onclick: () => startRun({ task: t }) }, "↻")
+      )
+    )
+  );
+}
+
+// ---------------------------------------------------------------- composer
+// The task box grows with its text; ↑ in an empty box recalls recent tasks;
+// "/" anywhere focuses it.
+
+function autoGrow() {
+  taskInput.style.height = "auto";
+  taskInput.style.height = `${Math.min(taskInput.scrollHeight + 2, 220)}px`;
+}
+function setTask(text) {
+  taskInput.value = text;
+  taskInput.dispatchEvent(new Event("input"));
+}
+taskInput.addEventListener("input", autoGrow);
+let recallAt = -1;
+taskInput.addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return (recallAt = -1);
+  const list = recentTasks();
+  const recalling = recallAt >= 0 && taskInput.value === list[recallAt];
+  if (!list.length || (taskInput.value && !recalling)) return;
+  e.preventDefault();
+  recallAt = e.key === "ArrowUp" ? Math.min(recallAt + 1, list.length - 1) : Math.max(recallAt - 1, -1);
+  if (recallAt < 0) setTask("");
+  else setTask(list[recallAt]);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "/" && !e.target.closest("input, textarea, select, [contenteditable]") && drawer.hidden && schedDrawer.hidden) {
+    e.preventDefault();
+    taskInput.focus();
+  }
+});
 
 // ---------------------------------------------------------- scheduled tasks
 
@@ -1846,29 +2148,37 @@ function getDays() {
 }
 document.querySelectorAll("[data-days]").forEach((b) => b.addEventListener("click", () => setDays(b.dataset.days.split(",").map(Number))));
 
-function fillScheduleForm(s) {
+let schedPreset = null; // { kind: "compare", query, shops, budget } while setting up a price watch
+
+function fillScheduleForm(s, preset = null) {
   editingSchedule = s?.id || null;
-  $("#schedTask").value = s?.task || "";
+  schedPreset = s?.kind === "compare" ? { kind: "compare", query: s.query, shops: s.shops, budget: s.budget } : preset;
+  const watch = !!schedPreset;
+  $("#schedWatchNote").hidden = !watch;
+  $("#schedTaskLabel").textContent = watch ? "Product" : "Task";
+  for (const id of ["#schedModeField", "#schedUrlField", "#schedCloseField", "#schedSafeHint"]) $(id).hidden = watch;
+  $("#schedTask").value = watch ? schedPreset.query : s?.task || "";
   $("#schedTime").value = s?.time || "09:00";
   setDays(s?.days || EVERY_DAY);
   $("#schedUrl").value = s?.startUrl || "";
   $("#schedClose").checked = s?.closeWhenDone !== false;
   (document.querySelector(`input[name=schedMode][value=${s?.mode === "autopilot" ? "autopilot" : "safe"}]`)).checked = true;
-  $("#schedSave").textContent = editingSchedule ? "Save changes" : "Add schedule";
-  $("#schedFormTitle").textContent = editingSchedule ? "Edit schedule" : "New schedule";
+  $("#schedSave").textContent = editingSchedule ? "Save changes" : watch ? "Add price watch" : "Add schedule";
+  $("#schedFormTitle").textContent = editingSchedule ? "Edit schedule" : watch ? "New price watch" : "New schedule";
 }
 
-async function openSchedules() {
+async function openSchedules(preset = null) {
   // "Every morning at 9, check train ticket prices and tell me" fills the form.
-  const typed = taskInput.value.trim();
+  const typed = preset ? "" : taskInput.value.trim();
   const p = parseScheduleText(typed);
-  fillScheduleForm(null);
+  fillScheduleForm(null, preset);
+  if (preset) $("#schedTime").value = "09:00";
   if (typed) {
     $("#schedTask").value = p.task || typed;
     if (p.time) $("#schedTime").value = p.time;
     if (p.days) setDays(p.days);
   }
-  $("#schedStatus").textContent = p.found ? "Filled in from what you typed — check it, then add." : "";
+  $("#schedStatus").textContent = preset ? "Pick when to check — you'll get a notification with the cheapest price." : p.found ? "Filled in from what you typed — check it, then add." : "";
   renderSchedules();
   schedDrawer.hidden = false;
 }
@@ -1893,8 +2203,8 @@ async function renderSchedules() {
         h(
           "div",
           { class: "sched-main" },
-          h("b", {}, s.task),
-          h("small", {}, `${describeWhen(s)} · ${s.mode === "autopilot" ? "Autopilot" : "Safe"} · ${describeNext(s)}`),
+          h("b", {}, s.kind === "compare" ? `⚖️ Price watch: ${s.query}` : s.task),
+          h("small", {}, `${describeWhen(s)}${s.kind === "compare" ? "" : ` · ${s.mode === "autopilot" ? "Autopilot" : "Safe"}`} · ${describeNext(s)}`),
           s.lastResult ? h("div", { class: `sched-last ${s.lastResult.ok ? "ok" : "bad"}` }, `${s.lastResult.ok ? "✓" : "✗"} ${ago(s.lastResult.at)}: ${s.lastResult.message.slice(0, 160)}`) : null
         ),
         h(
@@ -1934,7 +2244,7 @@ async function renderSchedules() {
   );
 }
 
-$("#schedBtn").addEventListener("click", openSchedules);
+$("#schedBtn").addEventListener("click", () => openSchedules());
 $("#closeSchedules").addEventListener("click", () => (schedDrawer.hidden = true));
 schedDrawer.addEventListener("click", (e) => {
   if (e.target === schedDrawer) schedDrawer.hidden = true;
@@ -1950,7 +2260,7 @@ $("#schedSave").addEventListener("click", async () => {
   const task = $("#schedTask").value.trim();
   const days = getDays();
   let startUrl = $("#schedUrl").value.trim();
-  if (!task) return (status.textContent = "Write the task first.");
+  if (!task) return (status.textContent = schedPreset ? "Write the product first." : "Write the task first.");
   if (!days.length) return (status.textContent = "Pick at least one day.");
   if (startUrl && !/^https?:\/\//i.test(startUrl)) startUrl = `https://${startUrl}`;
   if (startUrl) {
@@ -1970,7 +2280,9 @@ $("#schedSave").addEventListener("click", async () => {
     closeWhenDone: $("#schedClose").checked,
     enabled: true,
   };
+  if (schedPreset) Object.assign(s, { kind: "compare", query: task, shops: schedPreset.shops, budget: schedPreset.budget ?? null, task: `Price watch: ${task}`, startUrl: "" });
   await upsertSchedule(s);
+  toast(schedPreset ? "Price watch added" : "Schedule added");
   status.textContent = `Saved ✓ — ${describeNext(s).replace(/^Next: /, "next run ")}.`;
   fillScheduleForm(null);
   renderSchedules();
@@ -2005,18 +2317,12 @@ async function runScheduled(id) {
   if (!s) return ui.status("This scheduled task no longer exists.");
   document.title = `⏰ ${s.task.slice(0, 40)} — Stellar`;
   await chrome.storage.session.set({ schedRunning: { id, at: Date.now() } }).catch(() => {});
+  const meta = { id: Date.now(), title: `⏰ ${s.time}`, schedule: s };
   let win = null;
   try {
-    // A browser window of its own, next to this one, so neither hides the other
-    // (Chrome slows down pages it can't see).
-    const me = await chrome.windows.getCurrent();
-    const base = await chrome.windows.getLastFocused({ windowTypes: ["normal"] }).catch(() => null);
-    const geo = base?.width > me.width + 600 ? { left: base.left, top: base.top, width: base.width - me.width, height: base.height } : {};
-    win = await createWindowAt({ url: s.startUrl || "https://www.google.com/", type: "normal", focused: true }, geo);
-    const tabId = win.tabs[0].id;
-    await waitForLoad(tabId);
-    pendingRunMeta = { id: Date.now(), title: `⏰ ${s.time}`, schedule: s };
-    await startRun({ task: s.task, runMode: s.mode, startTabId: tabId });
+    // A price watch opens the stores in background tabs; a task gets a window of its own.
+    if (s.kind === "compare") await runCompare({ query: s.query, shops: s.shops, budget: s.budget }, meta);
+    else win = await runTaskInWindow(s, meta);
   } catch (e) {
     ui.status(`Couldn't start the scheduled task: ${e.message}`);
   }
@@ -2039,6 +2345,20 @@ async function runScheduled(id) {
   if (win && ok && s.closeWhenDone !== false) chrome.windows.remove(win.id).catch(() => {});
   await chrome.storage.session.remove("schedRunning").catch(() => {});
   closeCountdown(90);
+}
+
+/** Run a scheduled agent task in a new browser window beside this one, so
+ *  neither hides the other (Chrome slows down pages it can't see). */
+async function runTaskInWindow(s, meta) {
+  const me = await chrome.windows.getCurrent();
+  const base = await chrome.windows.getLastFocused({ windowTypes: ["normal"] }).catch(() => null);
+  const geo = base?.width > me.width + 600 ? { left: base.left, top: base.top, width: base.width - me.width, height: base.height } : {};
+  const win = await createWindowAt({ url: s.startUrl || "https://www.google.com/", type: "normal", focused: true }, geo);
+  const tabId = win.tabs[0].id;
+  await waitForLoad(tabId);
+  pendingRunMeta = meta;
+  await startRun({ task: s.task, runMode: s.mode, startTabId: tabId });
+  return win;
 }
 
 /** The runner window closes itself a little after the task, unless the user keeps it. */
@@ -2068,8 +2388,7 @@ function closeCountdown(secs) {
   configureAutoUnload(s.localUnloadMinutes ?? 10);
   // Warm the on-device model in the background once it has been downloaded.
   if (s.localBackup !== "off" && s.localPreload !== false && (await isLocalModelCached())) loadLocalModel().catch(() => {});
-  if (!s.apiKey) {
-    ui.status("Add your Gemini API key in Settings (gear icon) to begin.");
-  }
+  renderRecent();
+  refreshSetup();
   if (scheduledId) runScheduled(scheduledId);
 })();

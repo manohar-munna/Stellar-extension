@@ -409,30 +409,309 @@ code {
   min-width: 0;
 }
 
-.intro {
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius);
-  padding: 12px 14px;
+/* -------------------------------------------------------------------- home */
+
+.home {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.home-h {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
-.intro h2 {
-  margin: 0 0 6px;
-  font-size: 13px;
+/* Connect Gemini */
+.setup {
+  padding: 14px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(124, 58, 237, 0.45);
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.12), rgba(56, 189, 248, 0.08));
+  box-shadow: var(--shadow);
+}
+
+.setup-h {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.setup-ico {
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.setup h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.setup-h p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.setup-steps {
+  list-style: none;
+  margin: 12px 0 6px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setup-steps li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setup-steps .n {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--violet);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.setup-steps a.btn {
+  text-decoration: none;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+}
+
+.setup-steps .input-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.setup-steps .input {
+  height: 34px;
+  padding: 0 10px;
+}
+
+#setupSave {
+  width: auto;
+  flex: none;
+  height: 34px;
+  padding: 0 14px;
+}
+
+.setup-foot {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.set-status.ok {
+  color: var(--local-text);
+}
+
+.set-status.bad {
+  color: var(--danger-text);
+}
+
+/* Try something */
+.try-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.try-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 11px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  text-align: left;
+  transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+
+.try-card:hover {
+  border-color: rgba(124, 58, 237, 0.6);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
+
+.try-card:focus-visible,
+.ex:focus-visible,
+.act:focus-visible,
+.recent-t:focus-visible,
+.recent-run:focus-visible,
+.tools-row .tool:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+}
+
+.try-card .ti {
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+
+.try-card b {
+  font-size: 12.5px;
+}
+
+.try-card small {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.ex-l {
+  font-size: 11.5px;
+  color: var(--faint);
+  margin-right: 2px;
+}
+
+.ex {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px dashed var(--border-strong);
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ex:hover {
+  color: var(--text);
+  border-style: solid;
+  border-color: rgba(124, 58, 237, 0.6);
+}
+
+/* Recent tasks */
+.recent-list {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.recent-row {
+  display: flex;
+  align-items: center;
+}
+
+.recent-row + .recent-row {
+  border-top: 1px solid var(--border);
+}
+
+.recent-t {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-run {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.recent-t:hover,
+.recent-run:hover {
+  background: var(--surface-2);
   color: var(--text);
 }
 
-.intro ol {
-  padding-left: 18px;
-  margin: 6px 0;
+/* How it works */
+.how {
+  background: var(--surface);
 }
 
-.intro li {
+.how summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 11px;
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.how[open] summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.how ol {
+  margin: 8px 0 4px;
+  padding: 0 12px 0 30px;
+  color: var(--muted);
+}
+
+.how li {
   margin: 3px 0;
 }
 
-.intro .hint {
-  margin-bottom: 0;
+.how .hint {
+  margin: 6px 12px 10px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.pipe {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.pipe i,
+.legend {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.pipe .l,
+.legend.l {
+  background: var(--local);
+}
+
+.pipe .c,
+.legend.c {
+  background: var(--cloud);
+}
+
+.legend {
+  margin: 0 3px 0 6px;
+  vertical-align: -1px;
 }
 
 .run-h {
@@ -1470,6 +1749,19 @@ pre {
   box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.55), 0 2px 8px rgba(124, 58, 237, 0.18);
 }
 
+/* Dark: a lifted, violet-tinted chip so the choice reads at a glance. */
+:root[data-theme="dark"] .segmented input:checked + span {
+  background: rgba(124, 58, 237, 0.28);
+  color: #fff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .segmented input:checked + span {
+    background: rgba(124, 58, 237, 0.28);
+    color: #fff;
+  }
+}
+
 .segmented input:focus-visible + span {
   outline: 2px solid var(--violet);
   outline-offset: 1px;
@@ -1788,7 +2080,8 @@ pre {
   font-size: 12px;
 }
 
-.modeswitch input[value="autopilot"]:checked + span {
+.modeswitch input[value="autopilot"]:checked + span,
+:root .modeswitch.segmented input[value="autopilot"]:checked + span {
   color: #fff;
   background: linear-gradient(135deg, #7c3aed, #d946ef);
   box-shadow: none;
@@ -2370,4 +2663,228 @@ table.prices tr.best td.price {
 
 .close-bar span {
   flex: 1;
+}
+
+/* --------------------------------------------------------- composer extras */
+
+.kbd-hint {
+  position: absolute;
+  left: 11px;
+  bottom: 13px;
+  font-size: 10.5px;
+  color: var(--faint);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.task-wrap:focus-within .kbd-hint {
+  opacity: 1;
+}
+
+kbd {
+  font: 10px var(--mono);
+  padding: 0 4px;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+}
+
+.composer textarea {
+  min-height: 72px;
+  overflow-y: auto;
+}
+
+.tools-row .tool.nudge {
+  border-color: var(--violet);
+  background: rgba(124, 58, 237, 0.18);
+  animation: nudge 0.8s ease-in-out 3;
+}
+
+@keyframes nudge {
+  50% {
+    box-shadow: 0 0 0 5px rgba(124, 58, 237, 0.22);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tools-row .tool.nudge,
+  .try-card {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* ------------------------------------------------------------ settings nav */
+
+.set-nav {
+  position: sticky;
+  top: 49px;
+  z-index: 2;
+  display: flex;
+  gap: 4px;
+  margin-top: -6px;
+  padding: 6px 0 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.set-nav a {
+  flex: none;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.set-nav a:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.set-nav a.on {
+  color: var(--text);
+  background: rgba(124, 58, 237, 0.18);
+}
+
+.set-card {
+  scroll-margin-top: 100px;
+}
+
+.set-hint a {
+  color: var(--info-text);
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------- result actions */
+
+.final .msg {
+  display: block;
+}
+
+.final-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+  white-space: normal;
+}
+
+.act {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.act:hover {
+  border-color: rgba(124, 58, 237, 0.7);
+}
+
+.act[data-act="watch"] {
+  border-color: rgba(124, 58, 237, 0.5);
+  color: var(--cloud-text);
+}
+
+/* ------------------------------------------------------- ask about the page */
+
+.qa {
+  margin: 10px 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.qa .q {
+  align-self: flex-end;
+  max-width: 85%;
+  padding: 7px 11px;
+  border-radius: 12px 12px 3px 12px;
+  background: rgba(124, 58, 237, 0.16);
+  font-size: 12.5px;
+}
+
+.qa .a {
+  align-self: flex-start;
+  max-width: 92%;
+  padding: 8px 11px;
+  border-radius: 12px 12px 12px 3px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.qa .a .bad {
+  color: var(--danger-text);
+}
+
+.qa-meta {
+  display: block;
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
+.watch-note {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(124, 58, 237, 0.1);
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------------------- toast */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 50px;
+  z-index: 30;
+  transform: translateX(-50%);
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+  animation: toast-in 0.2s ease-out;
+  transition: opacity 0.25s;
+}
+
+.toast.out {
+  opacity: 0;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+}
+
+/* No empty gap under the composer when there's nothing to say. */
+.status-line:empty {
+  min-height: 0;
+  margin-top: 0;
+}
+
+.drawer-h,
+.set-nav,
+.drawer-inner > .set-card,
+.drawer-actions {
+  flex: none;
+}
+
+/* Follow-up / ask boxes: the button sizes to its label, the box takes the rest. */
+.followup .btn.primary {
+  flex: none;
+  min-width: 84px;
+  height: 38px;
 }

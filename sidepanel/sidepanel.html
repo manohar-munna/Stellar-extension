@@ -51,7 +51,8 @@
 
     <section class="composer">
       <div class="task-wrap">
-        <textarea id="task" rows="3" placeholder="Tell Stellar what to do on this tab — type, or press 🎤 and speak in any language…&#10;e.g. “Find the cheapest wireless earbuds and open the product page”"></textarea>
+        <textarea id="task" rows="2" placeholder="What should Stellar do on this page? Type, or press 🎤 and speak…"></textarea>
+        <span class="kbd-hint" aria-hidden="true"><kbd>Ctrl</kbd>+<kbd>↵</kbd> run · <kbd>↑</kbd> last task</span>
         <div class="voice">
           <select id="voiceLang" class="voice-lang" title="The language you speak — Auto identifies it" aria-label="Spoken language"></select>
           <button id="micBtn" class="mic" type="button" title="Speak your task (any language)" aria-label="Speak your task" aria-pressed="false">🎤</button>
@@ -80,19 +81,65 @@
 
     <div class="workspace">
       <main id="feed">
-        <div class="intro" id="intro">
-          <h2>What you'll see here</h2>
-          <p>Every step of the agent is shown as it happens:</p>
-          <ol>
-            <li><b>Capture</b> the visible tab and tag every clickable element (<code>[BUTTON_03]</code>).</li>
-            <li><b>Detect</b> credentials &amp; personal data — DOM rules on-device, plus the Gemini vision detector.</li>
-            <li><b>Redact</b> each hit into a semantic tag like <code>[EMAIL_01]</code>.</li>
-            <li><b>Send</b> only the sanitized frame — with a leak check of the outbound payload.</li>
-            <li><b>Reason</b>: Gemini proposes one action.</li>
-            <li><b>Validate</b> locally (allow-list, risky-action approval, tag resolution) and <b>Execute</b>.</li>
-          </ol>
-          <p class="hint">One-click tools: <b>Summarize page</b>, <b>Compare prices</b> across shops, and <b>Schedule</b> a task for later. Every task ends with a <b>privacy report</b>.</p>
-          <p class="hint">Each task gets its own tab. Every step shows a short brief — what was hidden, what was sent and what the model saw. Click a step (or a segment of its stage bar) for the full detail.</p>
+        <div class="home" id="intro">
+          <section class="setup" id="setupCard" hidden>
+            <div class="setup-h">
+              <span class="setup-ico" aria-hidden="true">🔑</span>
+              <div>
+                <h2>Connect Gemini to start</h2>
+                <p>Stellar thinks with Google's Gemini. The key is free and stays in this browser.</p>
+              </div>
+            </div>
+            <ol class="setup-steps">
+              <li><span class="n">1</span><a class="btn ghost sm" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get a free key ↗</a></li>
+              <li>
+                <span class="n">2</span>
+                <div class="input-row">
+                  <input id="setupKey" class="input" type="password" autocomplete="off" spellcheck="false" placeholder="Paste it here (AIza…)" aria-label="Gemini API key" />
+                  <button id="setupSave" class="btn primary sm" type="button">Connect</button>
+                </div>
+              </li>
+            </ol>
+            <div id="setupStatus" class="set-status" aria-live="polite"></div>
+            <p class="setup-foot">No key yet? <b>See what the AI sees</b> works without one.</p>
+          </section>
+
+          <section class="try">
+            <h2 class="home-h">Try something</h2>
+            <div class="try-grid">
+              <button class="try-card" type="button" data-try="summary"><span class="ti" aria-hidden="true">📝</span><b>Summarize this page</b><small>Key points and what to watch out for</small></button>
+              <button class="try-card" type="button" data-try="compare"><span class="ti" aria-hidden="true">⚖️</span><b>Compare prices</b><small>Amazon, Flipkart and Myntra at once</small></button>
+              <button class="try-card" type="button" data-try="snapshot"><span class="ti" aria-hidden="true">🛡️</span><b>See what the AI sees</b><small>Private data hidden — nothing sent</small></button>
+              <button class="try-card" type="button" data-try="schedule"><span class="ti" aria-hidden="true">⏰</span><b>Schedule a daily check</b><small>“Every morning at 9, …”</small></button>
+            </div>
+            <div class="examples">
+              <span class="ex-l">Or ask</span>
+              <button class="ex" type="button" data-task="Search YouTube for lo-fi study music and play the first video">Play lo-fi music on YouTube</button>
+              <button class="ex" type="button" data-task="Find the cheapest wireless earbuds on Amazon and open the product page">Find the cheapest earbuds</button>
+              <button class="ex" type="button" data-task="Open Wikipedia and tell me today's featured article in two lines">Today's featured article</button>
+            </div>
+          </section>
+
+          <section class="recent" id="recentBox" hidden>
+            <h2 class="home-h">Recent</h2>
+            <div id="recentList" class="recent-list"></div>
+          </section>
+
+          <details class="how">
+            <summary>
+              <span>How Stellar keeps you private</span>
+              <span class="pipe" aria-hidden="true"><i class="l"></i><i class="l"></i><i class="l"></i><i class="c"></i><i class="c"></i><i class="l"></i><i class="l"></i></span>
+            </summary>
+            <ol>
+              <li><b>Capture</b> the tab and tag every button and field (<code>[BUTTON_03]</code>).</li>
+              <li><b>Detect</b> passwords, emails, names, faces… on this device.</li>
+              <li><b>Redact</b> each one into a tag like <code>[EMAIL_01]</code>.</li>
+              <li><b>Send</b> only the cleaned copy — after a leak check.</li>
+              <li><b>Reason</b>: Gemini picks one action.</li>
+              <li><b>Validate</b> it here, then <b>Execute</b> it.</li>
+            </ol>
+            <p class="hint"><span class="legend l"></span> on this device <span class="legend c"></span> cloud (cleaned data only). Every task ends with a <b>privacy report</b>.</p>
+          </details>
         </div>
       </main>
     </div>
@@ -115,9 +162,17 @@
           <h2>Settings</h2>
           <button id="closeSettings" class="icon-btn" title="Close" aria-label="Close settings">✕</button>
         </div>
+        <nav class="set-nav" id="setNav" aria-label="Settings sections">
+          <a href="#set-gemini">Gemini</a>
+          <a href="#set-privacy">Privacy</a>
+          <a href="#set-model">Model</a>
+          <a href="#set-agent">Agent</a>
+          <a href="#set-compare">Compare</a>
+          <a href="#set-vault">Vault</a>
+        </nav>
 
         <!-- ------------------------------------------------------------ Gemini -->
-        <section class="set-card">
+        <section class="set-card" id="set-gemini">
           <h3>Gemini</h3>
           <div class="set-field">
             <label class="set-label" for="apiKey">API key(s)</label>
@@ -125,7 +180,7 @@
               <input id="apiKey" class="input" type="password" autocomplete="off" spellcheck="false" placeholder="AIza… (comma-separate several)" />
               <button id="toggleKey" class="btn ghost sm" type="button">Show</button>
             </div>
-            <p class="set-hint">Stored only in this browser. Rate-limited or rejected keys are rotated out automatically. Get one at aistudio.google.com.</p>
+            <p class="set-hint">Stored only in this browser. Rate-limited or rejected keys are rotated out automatically. <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get a free key ↗</a></p>
           </div>
           <div class="action-row">
             <button id="testKey" class="btn ghost sm" type="button">Test keys &amp; load models</button>
@@ -145,7 +200,7 @@
         </section>
 
         <!-- ----------------------------------------------------------- Privacy -->
-        <section class="set-card">
+        <section class="set-card" id="set-privacy">
           <h3>Privacy</h3>
           <div class="set-field">
             <span class="set-label">PII detection</span>
@@ -173,7 +228,7 @@
         </section>
 
         <!-- ---------------------------------------------------- On-device model -->
-        <section class="set-card">
+        <section class="set-card" id="set-model">
           <h3>On-device model</h3>
           <div class="model-box">
             <div class="model-head">
@@ -216,7 +271,7 @@
         </section>
 
         <!-- ------------------------------------------------------------- Agent -->
-        <section class="set-card">
+        <section class="set-card" id="set-agent">
           <h3>Agent</h3>
           <div class="set-grid">
             <div class="set-field">
@@ -244,7 +299,7 @@
         </section>
 
         <!-- ------------------------------------------------------ Price compare -->
-        <section class="set-card">
+        <section class="set-card" id="set-compare">
           <h3>Price compare</h3>
           <div class="set-field">
             <span class="set-label">Stores to check</span>
@@ -258,7 +313,7 @@
         </section>
 
         <!-- ------------------------------------------------------ Private vault -->
-        <section class="set-card">
+        <section class="set-card" id="set-vault">
           <h3>Private vault</h3>
           <div class="set-field">
             <label class="set-label" for="vault">Your details</label>
@@ -291,8 +346,8 @@
         </section>
 
         <div class="drawer-actions">
-          <span id="saveStatus" class="set-status"></span>
-          <button id="saveSettings" class="btn primary">Save settings</button>
+          <span id="saveStatus" class="set-status" aria-live="polite">Changes save automatically.</span>
+          <button id="saveSettings" class="btn primary">Done</button>
         </div>
       </div>
     </div>
@@ -306,8 +361,9 @@
 
         <section class="set-card">
           <h3 id="schedFormTitle">New schedule</h3>
+          <div class="watch-note" id="schedWatchNote" hidden>⚖️ <b>Price watch</b> — compares prices at the set time and notifies you with the cheapest.</div>
           <div class="set-field">
-            <label class="set-label" for="schedTask">Task</label>
+            <label class="set-label" for="schedTask" id="schedTaskLabel">Task</label>
             <textarea id="schedTask" class="input" rows="3" placeholder="Check train ticket prices from Hyderabad to Bengaluru for tomorrow and tell me the cheapest"></textarea>
           </div>
           <div class="set-grid">
@@ -315,7 +371,7 @@
               <label class="set-label" for="schedTime">Time</label>
               <input id="schedTime" class="input" type="time" value="09:00" />
             </div>
-            <div class="set-field">
+            <div class="set-field" id="schedModeField">
               <span class="set-label">Mode</span>
               <div class="segmented" role="radiogroup" aria-label="Scheduled run mode">
                 <label><input type="radio" name="schedMode" value="safe" checked /><span>Safe</span></label>
@@ -332,7 +388,7 @@
               <button class="link" type="button" data-days="0,6">Weekends</button>
             </div>
           </div>
-          <div class="set-field">
+          <div class="set-field" id="schedUrlField">
             <label class="set-label" for="schedUrl">Start on (optional)</label>
             <div class="input-row">
               <input id="schedUrl" class="input" type="url" spellcheck="false" placeholder="https://www.google.com/" />
@@ -340,11 +396,11 @@
             </div>
             <p class="set-hint">The page the task starts from. Empty = Google.</p>
           </div>
-          <label class="switch-row">
+          <label class="switch-row" id="schedCloseField">
             <span><b>Close the task window when done</b><small>The answer still pops up as a notification and is saved in the Stellar panel.</small></span>
             <input id="schedClose" class="switch" type="checkbox" checked />
           </label>
-          <p class="set-hint">Safe mode asks before risky steps — if nobody answers, the task waits (Stellar notifies you). Autopilot doesn't ask.</p>
+          <p class="set-hint" id="schedSafeHint">Safe mode asks before risky steps — if nobody answers, the task waits (Stellar notifies you). Autopilot doesn't ask.</p>
           <div class="action-row">
             <button id="schedSave" class="btn primary" type="button">Add schedule</button>
           </div>
@@ -360,6 +416,7 @@
     </div>
 
     <div id="lightbox" class="lightbox" hidden><img alt="" /></div>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
     <script type="module" src="sidepanel.js"></script>
   </body>

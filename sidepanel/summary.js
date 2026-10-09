@@ -107,8 +107,7 @@ export async function summarizeTab({ tab, settings, signal, rep, stages }) {
   rep.leakChecks++;
   rep.chars += prompt.length;
 
-  const byTag = new Map(secrets.map((s) => [s.tag, s.value]));
-  const fill = (s) => String(s ?? "").replace(/\[([A-Z][A-Z0-9_]*_\d{2}|VAULT_[A-Z0-9_]+)\]/g, (m, t) => (!KEEP_HIDDEN.test(t) && byTag.has(t) ? byTag.get(t) : m));
+  const fill = filler(secrets);
   const j = res.json || {};
   const summary = {
     headline: String(j.headline || ""),
@@ -122,5 +121,41 @@ export async function summarizeTab({ tab, settings, signal, rep, stages }) {
     key_points: summary.key_points.map(fill),
     watch_out: summary.watch_out.map(fill),
   };
-  return { summary, display, model: res.model, latencyMs: res.latencyMs, usage: res.usage };
+  // Kept in memory (never saved) so the user can ask follow-up questions about the page.
+  const context = { title, url, text: body.text, truncated: page.truncated, secrets };
+  return { summary, display, context, model: res.model, latencyMs: res.latencyMs, usage: res.usage };
+}
+
+/** Tags in model text → local values for display; credentials and IDs stay tags. */
+function filler(secrets) {
+  const byTag = new Map(secrets.map((s) => [s.tag, s.value]));
+  return (s) => String(s ?? "").replace(/\[([A-Z][A-Z0-9_]*_\d{2}|VAULT_[A-Z0-9_]+)\]/g, (m, t) => (!KEEP_HIDDEN.test(t) && byTag.has(t) ? byTag.get(t) : m));
+}
+
+const ASK_SYSTEM = `${SUMMARY_SYSTEM}
+- Answer the user's question about the page in 1 to 4 short sentences. If the page doesn't say, answer "The page doesn't say." Quote numbers and dates exactly.`;
+
+const ASK_SCHEMA = { type: "OBJECT", properties: { answer: { type: "STRING" } }, required: ["answer"] };
+
+/**
+ * A follow-up question about a summarized page: same tagged text, same leak check.
+ * @returns {{ answer, display, prompt, leaks, model, latencyMs }}
+ */
+export async function askAboutPage({ context, question, settings, signal, rep, onSend }) {
+  const q = scrubWithReport(question, context.secrets, { generic: true }).text;
+  const prompt = [`PAGE: "${context.title}" — ${context.url}`, context.truncated ? "(Only the first part of a long page is included.)" : "", "", "PAGE TEXT:", '"""', context.text, '"""', "", `QUESTION: ${q}`, "", "Return JSON with: answer"]
+    .filter((l, i, a) => l !== "" || a[i - 1] !== "")
+    .join("\n");
+  const leaks = leakCheck(ASK_SYSTEM + "\n" + prompt, context.secrets);
+  onSend?.({ question: q, chars: prompt.length, leaks });
+  if (leaks.length) {
+    rep.leaksBlocked++;
+    throw new LeakError(`Leak check failed: ${leaks.map((t) => `[${t}]`).join(", ")} in the question. Nothing was sent.`);
+  }
+  const res = await generateJson({ apiKey: settings.apiKey, model: settings.reasonModel, system: ASK_SYSTEM, prompt, schema: ASK_SCHEMA, temperature: 0.2, signal });
+  rep.cloudRequests++;
+  rep.leakChecks++;
+  rep.chars += prompt.length;
+  const answer = String(res.json?.answer || "The page doesn't say.");
+  return { answer, display: filler(context.secrets)(answer), question: q, model: res.model, latencyMs: res.latencyMs };
 }
