@@ -8,6 +8,19 @@ import { FaceDetector } from "../../vendor/mediapipe/vision_bundle.mjs";
 const MAX_CROPS = 30;
 let detectorP = null;
 
+// MediaPipe's WASM runtime prints its start-up notes (GL context, XNNPACK
+// delegate, feedback tensors) through console.error/warn, so Chrome lists them
+// as extension "errors". They are informational; only those exact notes are
+// dropped — anything else still reaches the console.
+const MEDIAPIPE_NOISE = /gl_context\.cc|OpenGL error checking is disabled|XNNPACK delegate|inference_feedback_manager|Graph successfully started running/;
+for (const level of ["log", "info", "warn", "error"]) {
+  const original = console[level].bind(console);
+  console[level] = (...args) => {
+    if (typeof args[0] === "string" && MEDIAPIPE_NOISE.test(args[0])) return;
+    original(...args);
+  };
+}
+
 function getDetector() {
   detectorP ??= FaceDetector.createFromOptions(
     {

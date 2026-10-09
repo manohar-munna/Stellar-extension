@@ -9,6 +9,9 @@ env.allowLocalModels = false;
 env.useBrowserCache = true;
 env.backends.onnx.wasm.wasmPaths = new URL("../../vendor/ort/", import.meta.url).href;
 env.backends.onnx.wasm.proxy = false;
+// Transformers.js asks WebGPU for a "high-performance" adapter; Chrome ignores
+// that on Windows and logs a warning on every load. Let Chrome pick (same GPU).
+if (env.backends.onnx.webgpu) env.backends.onnx.webgpu.powerPreference = undefined;
 
 export const MODEL_ID = "onnx-community/FastVLM-0.5B-ONNX";
 
