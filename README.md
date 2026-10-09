@@ -195,10 +195,11 @@ Model choice was benchmarked in Chromium on WebGPU: SmolVLM-256M and SmolVLM-500
 ID card; FastVLM-0.5B read a test ID card 6/6 in about 1.5 s. Weights use fp16 vision + 4-bit decoder + 8-bit
 embeddings: same accuracy as the model card's ~1.1 GB setup at ~670 MB.
 
-**Import vault data from files** (Settings → Private vault → *Import from file…*): ID-card photos and scanned PDFs are
-read by FastVLM on-device; text PDFs via pdf.js; `.docx`, `.vcf`, `.txt`, `.csv` and `.json` are parsed locally. You
-review and edit every field before it is saved. *Extract with Gemini instead* is an explicit opt-in (it uploads the
-file to Google).
+**Import vault data from files** (Settings → Private vault → *Add file…*): *Extract with Gemini instead* is **on by
+default** — Gemini reads the file (it is uploaded to Google for that), which is the most accurate for résumés and
+scans. Switch it off to read everything on this device instead: ID-card photos and scanned PDFs by FastVLM, text
+PDFs via pdf.js, and `.docx`, `.vcf`, `.txt`, `.csv` and `.json` parsed locally. Either way you review and edit every
+field before it is saved.
 
 ## Project layout
 

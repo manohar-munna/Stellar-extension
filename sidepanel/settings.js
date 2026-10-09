@@ -36,7 +36,7 @@ export const DEFAULTS = {
   // Unload the on-device model after this many idle minutes (0 = never).
   localUnloadMinutes: 10,
   // Vault import: "local" (on-device) or "gemini" (uploads the document).
-  vaultExtract: "local",
+  vaultExtract: "gemini",
   // Adding a file to the vault: "extract" details, "store" the file for
   // upload fields, or "both".
   vaultFileMode: "both",
@@ -44,7 +44,7 @@ export const DEFAULTS = {
 };
 
 export async function loadSettings() {
-  const stored = await chrome.storage.local.get([...Object.keys(DEFAULTS), "privacyV2", "modesV3"]);
+  const stored = await chrome.storage.local.get([...Object.keys(DEFAULTS), "privacyV2", "modesV3", "vaultGeminiV1"]);
   // One-time move to the on-device detector: earlier builds defaulted to the
   // cloud detector, which sends the raw frame before redaction.
   if (!stored.privacyV2) {
@@ -57,6 +57,12 @@ export async function loadSettings() {
     if (!stored.localBackup || stored.localBackup === "auto") stored.localBackup = "localfirst";
     await chrome.storage.local.set({ localBackup: stored.localBackup, modesV3: true });
   }
+  // One-time switch to Gemini extraction for vault imports (now the default).
+  if (!stored.vaultGeminiV1) {
+    stored.vaultExtract = "gemini";
+    await chrome.storage.local.set({ vaultExtract: "gemini", vaultGeminiV1: true });
+  }
+  delete stored.vaultGeminiV1;
   delete stored.privacyV2;
   delete stored.modesV3;
   return { ...DEFAULTS, ...stored };
