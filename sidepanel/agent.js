@@ -96,32 +96,37 @@ export class StellarAgent {
   }
 
   /** Labelled personal details on the page → a "save to vault?" card (once per site per run). */
-  async offerPageDetails(tabId, S, vault, url) {
+  /** Note the labelled personal details on this page; a site's pages add up over the task. */
+  async notePageDetails(tabId, url) {
     let host = "";
     try {
       host = new URL(url).host;
     } catch {
       return;
     }
-    this.vaultOffered ||= new Set();
-    if (this.vaultOffered.has(host)) return;
-    const pairs = await this.cs(tabId, { op: "fields" });
-    const fields = vaultFieldsFromPage(pairs, (await loadSettings()).vault);
-    if (!fields.length) return;
-    this.vaultOffered.add(host);
-    this.ui.offerVault(S, fields, {
-      host,
-      onSave: async (picked) => {
-        const current = (await loadSettings()).vault;
-        await saveSettings({ vault: upsertVault(current, picked).text });
-        // Usable in this run straight away as [VAULT_…] tags.
-        for (const f of picked) {
-          const tag = `VAULT_${f.key}`;
-          for (let i = vault.length - 1; i >= 0; i--) if (vault[i].tag === tag) vault.splice(i, 1);
-          vault.push({ tag, value: f.value });
-        }
-      },
-    });
+    const seen = this.pageDetails.get(host) || [];
+    for (const p of (await this.cs(tabId, { op: "fields" })) || []) {
+      if (seen.length < 400 && !seen.some((q) => q.label === p.label && q.value === p.value)) seen.push(p);
+    }
+    this.pageDetails.set(host, seen);
+  }
+
+  /** Once the task is over: offer to save the new details it came across (one card per site). */
+  async offerPageDetails() {
+    const vaultText = (await loadSettings()).vault;
+    for (const [host, pairs] of this.pageDetails) {
+      const fields = vaultFieldsFromPage(pairs, vaultText);
+      if (!fields.length) continue;
+      this.ui.offerVault(null, fields, {
+        host,
+        run: this.ui.lastFinished,
+        onSave: async (picked) => {
+          const current = (await loadSettings()).vault;
+          await saveSettings({ vault: upsertVault(current, picked).text });
+        },
+      });
+    }
+    this.pageDetails.clear();
   }
 
   async ensureActive(tabId) {
@@ -322,6 +327,7 @@ export class StellarAgent {
     if (runMode) this.settings.runMode = runMode;
     this.stopped = false;
     this.running = true;
+    this.pageDetails = new Map(); // host → labelled values seen on it, offered for the vault at the end
     this.abort = new AbortController();
     this.real = new RealInput(); // attached on first real click/keystroke, detached when the run ends
     const { settings, ui } = this;
@@ -614,9 +620,8 @@ export class StellarAgent {
         });
         this.checkStop();
         // The user's own details shown on this page (a profile, an account
-        // page): offer to keep them in the private vault. A quick local read;
-        // the card itself doesn't wait for the user.
-        if (settings.vaultFromPages !== false) await this.offerPageDetails(tabId, S, vault, scan.url).catch((e) => console.warn("[stellar] vault offer failed", e));
+        // page): noted now, offered for the private vault when the task ends.
+        if (settings.vaultFromPages !== false) await this.notePageDetails(tabId, scan.url).catch((e) => console.warn("[stellar] reading page details failed", e));
 
         // ----------------------------------------------------------- 3 REDACT
         ui.setStage("redact");
@@ -870,6 +875,9 @@ export class StellarAgent {
       if (holdModel) holdLocalModel(false);
       await this.real.detach();
       this.running = false;
+      // The task is done (or failed): now ask about saving details it saw. Not after Stop.
+      if (!this.stopped) await this.offerPageDetails().catch((e) => console.warn("[stellar] vault offer failed", e));
+      else this.pageDetails.clear();
       ui.setStage(null);
       try {
         if (tabId != null) await this.cs(tabId, { op: "overlay-remove" });

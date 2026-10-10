@@ -1129,8 +1129,7 @@ const ui = {
    * save them. Doesn't block the run. Values are shown part-masked, because
    * the run (this card included) is kept on this device's task history.
    */
-  offerVault(S, fields, { host, onSave }) {
-    const run = activeRun;
+  offerVault(S, fields, { host, onSave, run = activeRun }) {
     if (!run) return;
     const NEVER_KEY = "stellar.vaultNever";
     let never = [];
@@ -1195,12 +1194,12 @@ const ui = {
     );
     const box = card(
       { title: `Your details on ${host}`, badge: "local", badgeText: "on-device" },
-      h("div", { class: "note" }, `Found ${fields.length} personal detail${fields.length === 1 ? "" : "s"} on this page that your private vault doesn't have yet. Save them so Stellar can fill forms for you?`),
+      h("div", { class: "note" }, `During this task Stellar saw ${fields.length} personal detail${fields.length === 1 ? "" : "s"} on ${host} that your private vault doesn't have yet. Save them so it can fill forms for you next time?`),
       h("div", { class: "vo-list" }, rows.map((r) => r.el)),
       status,
       actions
     );
-    box.classList.add("zone-local", "vault-offer", "vo-open");
+    box.classList.add("zone-local", "vault-offer", "vo-open", "vo-end");
     const finish = (text) => {
       box.classList.remove("vo-open");
       box.querySelector(".vo-list")?.remove();
@@ -1208,7 +1207,11 @@ const ui = {
       status.textContent = text;
       persistRun(run);
     };
-    append(run.el, box);
+    // Below the result and privacy report, above the follow-up box.
+    const followUp = run.el.querySelector(":scope > .followup");
+    if (followUp) followUp.before(box);
+    else run.el.append(box);
+    if (run === selectedRun) glideTo(box, 900);
   },
 
   cancelPending() {
