@@ -728,7 +728,19 @@
     const priceEl = (site?.price || "").split(",").map((sel) => sel.trim() && card.querySelector(sel)).find(Boolean);
     const priceText = (collapse(priceEl?.textContent || "").match(PRICE_RE) || text.match(PRICE_RE))?.[0] || "";
     let name = "";
-    if (site?.title) name = collapse([site.brand && card.querySelector(site.brand)?.textContent, card.querySelector(site.title)?.textContent].filter(Boolean).join(" "));
+    if (site?.title) {
+      // Some shops split the name over several headings (Amazon: a brand <h2>
+      // then the product-title <h2>) — join them, without repeats.
+      const parts = [site.brand && card.querySelector(site.brand)?.textContent, ...[...card.querySelectorAll(site.title)].map((e) => e.textContent)]
+        .map((t) => collapse(t || ""))
+        .filter((t, i, a) => t && a.indexOf(t) === i && !a.some((o, j) => j !== i && o.length > t.length && o.includes(t)));
+      name = parts.join(" ");
+    }
+    // A name of one word is usually just the brand: use the link's label instead.
+    if (name.split(" ").length < 2) {
+      const label = collapse(link?.getAttribute("aria-label") || card.querySelector("img[alt]")?.getAttribute("alt") || "");
+      if (label.split(" ").length >= 2) name = label;
+    }
     if (!name) name = guessName(card, link, text);
     // "4.1 out of 5", "4.3★", a "4.2" line, or "4" over "(5,964)" ratings.
     const r =
