@@ -954,23 +954,40 @@ const ui = {
     statusLine.classList.toggle("live", !!text);
   },
 
-  confirm(S, reason) {
+  // opts.irreversible: a delete / payment — Safe mode asks twice, the second
+  // time saying plainly that it can't be undone.
+  confirm(S, reason, opts = {}) {
     const run = activeRun;
     setRunStatus(run, "waiting");
     return new Promise((resolve) => {
+      const twoStep = !!opts.irreversible;
       const box = h(
         "div",
-        { class: "confirm-box" },
-        h("div", {}, h("b", {}, "Approval needed: "), reason),
+        { class: `confirm-box${twoStep ? " irreversible" : ""}` },
+        h("div", {}, h("b", {}, twoStep ? "Step 1 of 2 — approval needed: " : "Approval needed: "), reason),
         h(
           "div",
           { class: "row" },
-          h("button", { class: "btn ok", onclick: () => done(true) }, "Approve"),
+          h("button", { class: "btn ok", onclick: () => (twoStep ? secondStep() : done(true)) }, twoStep ? "Continue…" : "Approve"),
           h("button", { class: "btn danger", onclick: () => done(false) }, "Reject")
         )
       );
+      const what = { delete: "Deleting can't be undone — the data is gone for good.", payment: "Money that is sent can't be pulled back by Stellar.", cancel: "Cancelling may not be reversible." }[opts.irreversible] || "This can't be undone.";
+      const secondStep = () => {
+        const yes = h("button", { class: "btn danger", disabled: true, onclick: () => done(true) }, "Yes, do it — I understand");
+        box.replaceChildren(
+          h("div", { class: "irr-head" }, "⚠ This action cannot be reversed"),
+          h("div", {}, h("b", {}, "Step 2 of 2: "), opts.summary || reason),
+          h("div", { class: "irr-note" }, `${what} Stellar will do it only if you confirm again.`),
+          h("div", { class: "row" }, yes, h("button", { class: "btn ghost", onclick: () => done(false) }, "Cancel"))
+        );
+        // A short pause so the second confirm can't be a double-click on the first.
+        setTimeout(() => (yes.disabled = false), 1200);
+        if (follow.on) glideTo(box);
+        this.status("Confirm again — this can't be undone");
+      };
       const done = (v) => {
-        box.replaceWith(h("div", { class: `note ${v ? "" : "warn"}` }, v ? "✓ Approved by you" : "✗ Rejected by you"));
+        box.replaceWith(h("div", { class: `note ${v ? "" : "warn"}` }, v ? (twoStep ? "✓ Confirmed by you in two steps" : "✓ Approved by you") : "✗ Rejected by you"));
         pending = pending.filter((p) => p !== cancel);
         if (run.status === "waiting") setRunStatus(run, "running");
         resolve(v);
@@ -1698,7 +1715,7 @@ document.querySelectorAll("input[name=runMode]").forEach((r) =>
   r.addEventListener("change", async () => {
     applyRunMode(r.value);
     await saveSettings({ runMode: r.value });
-    ui.status(r.value === "autopilot" ? "Autopilot: no approval prompts — it only stops for real questions (missing details, CAPTCHAs)." : "Safe mode: asks before risky actions, vault fills and pasting secrets.");
+    ui.status(r.value === "autopilot" ? "Autopilot: no approval prompts — it only stops for real questions (missing details, CAPTCHAs)." : "Safe mode: fills fields by itself; asks before submitting or sending, and twice before anything that can't be undone (delete, pay).");
   })
 );
 

@@ -1436,6 +1436,17 @@ pre {
   color: var(--danger-text);
 }
 
+.confirm-box.irreversible {
+  border-color: var(--danger-text);
+}
+.confirm-box .irr-head {
+  font-weight: 700;
+  color: var(--danger-text);
+}
+.confirm-box .irr-note {
+  font-size: 12px;
+  opacity: 0.85;
+}
 .confirm-box {
   border: 1px solid rgba(250, 204, 21, 0.4);
   background: rgba(250, 204, 21, 0.07);

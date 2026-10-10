@@ -314,6 +314,7 @@ export class StellarAgent {
     if (continueRun) continueRun.tagMemory = tagMemory;
     const maxSteps = snapshot ? 1 : Math.max(1, Math.min(50, Number(settings.maxSteps) || 15));
     let consecutiveBlocks = 0;
+    const approvals = []; // two-step confirmations given in this run: { kind, step }
     const dismissedChecks = new Set(); // check kinds the user waved through this run
     let dismissedAutofill = false;
     const autofillTried = new Set(); // pages where the real-click unlock was tried
@@ -750,6 +751,8 @@ export class StellarAgent {
           settings,
           history,
           vaultFiles,
+          approvals,
+          step,
         });
         // v.action has a normalised target; displayText keeps tags instead of
         // the locally-substituted values, so summaries never contain secrets.
@@ -760,9 +763,11 @@ export class StellarAgent {
         if (v.verdict === "confirm") {
           await ui.card(S, "validate", { verdict: v.verdict, checks: v.checks, reason: v.reason, pending: true, summary });
           await this.cs(tabId, { op: "overlay", visible: true, message: "Waiting for your approval in the Stellar panel" });
-          approved = await ui.confirm(S, v.reason);
+          approved = await ui.confirm(S, v.reason, { irreversible: v.irreversible, summary });
           this.checkStop();
           userNote = approved ? "approved by user" : "rejected by user";
+          // A confirmed delete/payment covers the site's own follow-up steps for it.
+          if (approved && v.irreversible) approvals.push({ kind: v.irreversible, step });
         } else {
           await ui.card(S, "validate", { verdict: v.verdict, checks: v.checks, reason: v.reason, summary });
         }
