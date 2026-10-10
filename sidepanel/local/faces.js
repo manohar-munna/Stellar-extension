@@ -153,6 +153,18 @@ export async function detectFaces(bitmap, viewport, images = []) {
     score: f.score,
     detail: `face (${Math.round(f.score * 100)}%)`,
   }));
+  // A close-up's padded box would spill over the next thumbnail or the page:
+  // keep each face inside the picture it is in.
+  const pics = images.filter((r) => !r.logo);
+  for (const f of faces) {
+    const cx = f.rect.x + f.rect.w / 2;
+    const cy = f.rect.y + f.rect.h / 2;
+    const pic = pics.filter((r) => cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h).sort((a, b) => a.w * a.h - b.w * b.h)[0];
+    if (!pic) continue;
+    const x = Math.max(f.rect.x, pic.x);
+    const y = Math.max(f.rect.y, pic.y);
+    f.rect = { x, y, w: Math.min(f.rect.x + f.rect.w, pic.x + pic.w) - x, h: Math.min(f.rect.y + f.rect.h, pic.y + pic.h) - y };
+  }
   return { faces, ms: Math.round(performance.now() - t0) };
 }
 

@@ -836,6 +836,42 @@
     return overlayRoot;
   }
 
+  // Before a screenshot: wait until the page stops changing and the pictures
+  // on screen have loaded. "Loaded" for the tab isn't enough — single-page
+  // sites (YouTube, Gmail) swap content in after a click without a reload,
+  // and thumbnails arrive later still. Returns early on a quiet page.
+  function settleView({ maxMs = 4000, quietMs = 500 } = {}) {
+    return new Promise((resolve) => {
+      const t0 = performance.now();
+      let last = t0;
+      const mo = new MutationObserver((list) => {
+        // Stellar's own overlay doesn't count.
+        if (list.some((m) => !overlayHost || !overlayHost.contains(m.target))) last = performance.now();
+      });
+      mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "srcset"] });
+      const loading = () => {
+        let n = 0;
+        for (const img of document.images) {
+          if (!(img.currentSrc || img.getAttribute("src"))) continue;
+          if (img.complete && img.naturalWidth > 0) continue;
+          const r = img.getBoundingClientRect();
+          if (r.width >= 24 && r.height >= 24 && intersectsViewport(r) && isRendered(img)) n++;
+        }
+        return n;
+      };
+      const tick = () => {
+        const now = performance.now();
+        const pending = loading();
+        const quiet = now - last >= quietMs && pending === 0 && document.readyState !== "loading";
+        if (quiet || now - t0 >= maxMs) {
+          mo.disconnect();
+          resolve({ ms: Math.round(now - t0), pending, timedOut: !quiet });
+        } else setTimeout(tick, 120);
+      };
+      setTimeout(tick, 150);
+    });
+  }
+
   function setOverlay({ visible, message }) {
     if (visible === false) {
       if (overlayHost) overlayHost.style.display = "none";
@@ -1306,6 +1342,8 @@
       case "overlay-remove":
         removeOverlay();
         return true;
+      case "settle":
+        return settleView(cmd);
       default:
         return { error: `unknown op ${cmd.op}` };
     }

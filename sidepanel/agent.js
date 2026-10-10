@@ -420,9 +420,13 @@ export class StellarAgent {
         } catch (e) {
           throw new Error(`Cannot access this page (${e.message}). Some pages (Web Store, PDFs, chrome://) block extensions.`);
         }
+        // Let the page finish drawing first: content that arrives after a
+        // click (single-page sites, lazy thumbnails) belongs in the screenshot.
+        const settled = await this.cs(tabId, { op: "settle", maxMs: step === stepBase + 1 ? 2500 : 4000 }).catch(() => null);
+        this.checkStop();
         const t0 = performance.now();
         await this.cs(tabId, { op: "overlay", visible: false });
-        await sleep(40);
+        await sleep(settled?.timedOut ? 300 : 80);
         let scan = await this.cs(tabId, { op: "scan", known: vault, names: settings.redactNames !== false });
         const rawDataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
         await this.cs(tabId, { op: "overlay", visible: true, message: snapshot ? "Stellar snapshot" : `Stellar · step ${step}` });
