@@ -68,16 +68,14 @@
         <button id="snapBtn" class="btn ghost" title="Capture → Detect → Redact and show the payload that would be sent. No reasoning call.">Snapshot</button>
         <button id="stopBtn" class="btn danger" hidden>Stop</button>
       </div>
-      <div class="tools-row" aria-label="Tools">
-        <button id="sumBtn" class="tool" type="button" title="Summarize the page you're on — private data is hidden before anything is sent">📝 Summarize page</button>
-        <button id="cmpBtn" class="tool" type="button" title="Type a product above, then compare its price across shops at the same time">⚖️ Compare prices</button>
-        <button id="schedBtn" class="tool" type="button" title="Run a task automatically at a set time — e.g. “every morning at 9, check train ticket prices”">⏰ Schedule</button>
-      </div>
       <div id="statusLine" class="status-line" aria-live="polite"></div>
     </section>
 
     <nav class="runbar" id="runbar" hidden aria-label="Tasks">
       <div class="runtabs" id="runTabs" role="tablist"></div>
+      <button id="newTaskBtn" class="newtask" type="button" title="New task — back to the start screen" aria-label="New task">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+      </button>
     </nav>
 
     <div class="workspace">
@@ -108,10 +106,10 @@
           <section class="try">
             <h2 class="home-h">Try something</h2>
             <div class="try-grid">
-              <button class="try-card" type="button" data-try="summary"><span class="ti" aria-hidden="true">📝</span><b>Summarize this page</b><small>Key points and what to watch out for</small></button>
-              <button class="try-card" type="button" data-try="compare"><span class="ti" aria-hidden="true">⚖️</span><b>Compare prices</b><small>Amazon, Flipkart and Myntra at once</small></button>
-              <button class="try-card" type="button" data-try="snapshot"><span class="ti" aria-hidden="true">🛡️</span><b>See what the AI sees</b><small>Private data hidden — nothing sent</small></button>
-              <button class="try-card" type="button" data-try="schedule"><span class="ti" aria-hidden="true">⏰</span><b>Schedule a daily check</b><small>“Every morning at 9, …”</small></button>
+              <button class="try-card" type="button" data-try="summary" aria-pressed="false"><span class="ti" aria-hidden="true">📝</span><b>Summarize this page</b><small>Key points and what to watch out for</small></button>
+              <button class="try-card" type="button" data-try="compare" aria-pressed="false"><span class="ti" aria-hidden="true">⚖️</span><b>Compare prices</b><small>Amazon, Flipkart and Myntra at once</small></button>
+              <button class="try-card" type="button" data-try="snapshot" aria-pressed="false"><span class="ti" aria-hidden="true">🛡️</span><b>See what the AI sees</b><small>Private data hidden — nothing sent</small></button>
+              <button class="try-card" type="button" data-try="schedule" aria-pressed="false"><span class="ti" aria-hidden="true">⏰</span><b>Schedule a daily check</b><small>“Every morning at 9, …”</small></button>
             </div>
             <div class="examples">
               <span class="ex-l">Or ask</span>

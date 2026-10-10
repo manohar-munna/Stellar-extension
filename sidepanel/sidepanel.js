@@ -617,6 +617,7 @@ async function restoreRuns() {
 
 function selectRun(run) {
   selectedRun = run;
+  if (run) hideHome();
   try {
     if (run) localStorage.setItem("stellar.selectedRun", String(run.id));
   } catch {
@@ -1170,7 +1171,7 @@ const busy = () => agent.running || !!toolAbort;
 function setRunning(on) {
   runBtn.disabled = on;
   snapBtn.disabled = on;
-  for (const b of document.querySelectorAll(".tools-row .tool")) if (b.id !== "schedBtn") b.disabled = on;
+  for (const b of document.querySelectorAll(".try-card[data-try]")) if (b.dataset.try !== "schedule") b.disabled = on;
   stopBtn.hidden = !on;
 }
 
@@ -1269,7 +1270,7 @@ micBtn.addEventListener("click", async () => {
       ui.status(`Heard in ${languageName(lang)}${how} — running in 2 s… click the box to edit instead.`);
       voiceState.timer = setTimeout(() => {
         voiceState.timer = null;
-        start("agent");
+        primaryAction();
       }, 2000);
     },
     onError: (code, message) => {
@@ -1294,14 +1295,14 @@ taskInput.addEventListener("input", () => {
   if (taskInput.value !== voiceState.text) voiceState.text = "";
 });
 
-runBtn.addEventListener("click", () => start("agent"));
+runBtn.addEventListener("click", () => primaryAction());
 snapBtn.addEventListener("click", () => start("snapshot"));
 stopBtn.addEventListener("click", () => {
   agent.stop();
   toolAbort?.abort();
 });
 taskInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) start("agent");
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) primaryAction();
 });
 
 $("#clearBtn").addEventListener("click", () => {
@@ -1951,8 +1952,6 @@ function priceTable(out) {
 }
 
 $("#compareShops").append(...SHOPS.map((s) => h("label", { class: "day" }, h("input", { type: "checkbox", value: s.id }), h("span", {}, s.name))));
-$("#sumBtn").addEventListener("click", () => runSummary());
-$("#cmpBtn").addEventListener("click", () => runCompare());
 
 // ---------------------------------------------------------- result actions
 // Copy / Run again / Watch price under every result. Buttons are found by
@@ -2075,10 +2074,44 @@ function toast(text) {
 const home = $("#intro");
 function hideHome() {
   home.hidden = true;
+  pickTool(null);
+  $("#newTaskBtn").classList.remove("on");
 }
 function showHome() {
   renderRecent();
   home.hidden = false;
+  $("#newTaskBtn").classList.toggle("on", runs.length > 0);
+}
+
+// "+" next to the task tabs: back to the start screen for a new task. Open
+// tasks stay in their tabs (a running one keeps running).
+$("#newTaskBtn").addEventListener("click", () => {
+  selectRun(null);
+  showHome();
+  if (!busy()) setTask("");
+  taskInput.focus();
+});
+
+// A start-screen card shows that it's picked (ring, tick, a little pop).
+// Compare prices needs a product first, so it stays picked and the Run button
+// (and Ctrl+Enter) compare prices instead of running the agent.
+let pickedTool = null;
+function pickTool(what) {
+  pickedTool = what;
+  for (const c of document.querySelectorAll(".try-card[data-try]")) {
+    const on = c.dataset.try === what;
+    c.classList.toggle("picked", on);
+    c.setAttribute("aria-pressed", String(on));
+    if (on) {
+      c.classList.remove("pop");
+      void c.offsetWidth; // restart the animation
+      c.classList.add("pop");
+    }
+  }
+  runBtn.textContent = what === "compare" ? "Compare prices" : "Run agent";
+}
+function primaryAction() {
+  return pickedTool === "compare" ? runCompare() : start("agent");
 }
 
 async function refreshSetup() {
@@ -2112,21 +2145,31 @@ home.addEventListener("click", (e) => {
   const tryBtn = e.target.closest("[data-try]");
   if (tryBtn) {
     const what = tryBtn.dataset.try;
-    if (what === "summary") return runSummary();
-    if (what === "snapshot") return start("snapshot");
-    if (what === "schedule") return openSchedules();
     if (what === "compare") {
-      if (taskInput.value.trim()) return runCompare();
-      setTask("boAt Airdopes 141 under 2000");
+      // Click again to unpick.
+      if (pickedTool === "compare") {
+        pickTool(null);
+        return ui.status("");
+      }
+      pickTool("compare");
+      if (!taskInput.value.trim()) setTask("boAt Airdopes 141 under 2000");
+      taskInput.focus();
       taskInput.select();
-      ui.status("Type the product you want (or keep the example), then press ⚖️ Compare prices.");
-      $("#cmpBtn").classList.add("nudge");
-      setTimeout(() => $("#cmpBtn").classList.remove("nudge"), 2400);
-      return;
+      return ui.status("Compare prices is selected — type the product (or keep the example), then press Compare prices. Click the card again to cancel.");
     }
+    pickTool(what);
+    if (what === "schedule") return openSchedules();
+    // Let the pop show for a moment, then start (the start screen then makes way for the task).
+    setTimeout(() => {
+      if (what === "summary") runSummary();
+      else start("snapshot");
+      if (pickedTool === what) setTimeout(() => pickedTool === what && pickTool(null), 900);
+    }, 200);
+    return;
   }
   const ex = e.target.closest("[data-task]");
   if (ex) {
+    pickTool(null);
     setTask(ex.dataset.task);
     taskInput.focus();
     ui.status("Press Run agent (or Ctrl+Enter) to start — edit the task first if you like.");
@@ -2325,7 +2368,8 @@ async function runScheduleNow(id) {
   await chrome.storage.session.set({ schedRunning: { id, at: Date.now(), winId: win?.id } }).catch(() => {});
 }
 
-$("#schedBtn").addEventListener("click", () => openSchedules());
+// The Schedule card stays picked while its drawer is open.
+new MutationObserver(() => schedDrawer.hidden && pickedTool === "schedule" && pickTool(null)).observe(schedDrawer, { attributes: true, attributeFilter: ["hidden"] });
 $("#closeSchedules").addEventListener("click", () => (schedDrawer.hidden = true));
 schedDrawer.addEventListener("click", (e) => {
   if (e.target === schedDrawer) schedDrawer.hidden = true;
