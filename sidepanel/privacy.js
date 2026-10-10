@@ -100,6 +100,8 @@ export function buildRegions({ domPii = [], vision = [], local = [], viewport, m
 
   for (const v of vision) {
     if (!Array.isArray(v.box_2d) || v.box_2d.length !== 4) continue;
+    // Only faces and personal data are hidden — never a whole picture.
+    if (/^(?:PRIVATE_)?IMAGE$|^PHOTO$/i.test(String(v.category || ""))) continue;
     const rect = box2dToRect(v.box_2d, viewport);
     if (rect.w < 3 || rect.h < 3) continue;
     // Ignore absurd "redact the whole page" boxes; they destroy all context.

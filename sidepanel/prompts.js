@@ -15,7 +15,6 @@ export const PII_ENUM = [
   "DOB",
   "FACE",
   "SIGNATURE",
-  "IMAGE",
   "PII",
 ];
 
@@ -30,12 +29,11 @@ Flag:
 - GOV_ID: Aadhaar, PAN, passport, driving licence, SSN, voter ID numbers
 - EMAIL, PHONE, ADDRESS, DOB: personal email addresses, phone numbers, postal addresses, dates of birth
 - NAME: full names of real private people (account holder, contacts, message senders/recipients)
-- FACE: faces or profile photos of people
+- FACE: a person's face — box the face itself (forehead to chin), one region per face, even when a photo shows many people
 - SIGNATURE: handwritten signatures
-- IMAGE: private photos or scanned documents
-- PII: any other personal data
+- PII: any other personal data (as text)
 
-Do NOT flag: generic UI text, field labels or placeholders (e.g. the word "Email"), empty inputs, logos, product names, prices, public company names, navigation menus.
+Do NOT flag: pictures that are not faces (products, scenery, animals, planets, illustrations, charts, icons, logos), generic UI text, field labels or placeholders (e.g. the word "Email"), empty inputs, product names, prices, public company names, navigation menus. Never box a whole picture — only the faces in it.
 
 Return tight boxes around the sensitive value itself, not the whole row. box_2d is [ymin, xmin, ymax, xmax] normalised to 0-1000 relative to the image. In "reason" describe what it is in a few words WITHOUT repeating the sensitive value. Return {"regions": []} if nothing is sensitive.`;
 

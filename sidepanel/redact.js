@@ -73,7 +73,7 @@ export function renderDetection(bitmap, viewport, regions) {
 }
 
 // Redaction policy from PS 26171: blur faces, black out passwords, mask PII.
-const BLUR = new Set(["FACE", "IMAGE", "SIGNATURE"]);
+const BLUR = new Set(["FACE", "SIGNATURE"]);
 const BLACK = new Set(["PASSWORD", "API_KEY", "OTP", "CVV", "CARD", "ACCOUNT", "GOV_ID"]);
 
 export function treatmentOf(category) {
@@ -113,21 +113,40 @@ function blurRegion(ctx, c, b, s) {
   const w = Math.min(c.width - x, Math.ceil(b.w));
   const h = Math.min(c.height - y, Math.ceil(b.h));
   if (w < 2 || h < 2) return;
-  // About five blocks across the face: features are gone, the shape of a photo remains.
-  const cells = 5;
+  const radius = Math.max(4, Math.round(Math.min(w, h) / 6));
+  const pad = radius * 2;
+  // Sample a little beyond the box: a CSS blur fades to transparent at its
+  // edges, which would let the real face show through around the rim.
+  const ex = Math.max(0, x - pad);
+  const ey = Math.max(0, y - pad);
+  const ew = Math.min(c.width, x + w + pad) - ex;
+  const eh = Math.min(c.height, y + h + pad) - ey;
+  // Four blocks across the face, then smoothed: eyes, nose and mouth are gone
+  // at any size, while it still reads as a photo of a person.
+  const cells = 4;
+  const per = Math.min(w, h) / cells;
   const tiny = document.createElement("canvas");
-  tiny.width = Math.max(1, Math.round((cells * w) / Math.min(w, h)));
-  tiny.height = Math.max(1, Math.round((cells * h) / Math.min(w, h)));
-  tiny.getContext("2d").drawImage(c, x, y, w, h, 0, 0, tiny.width, tiny.height);
+  tiny.width = Math.max(1, Math.round(ew / per));
+  tiny.height = Math.max(1, Math.round(eh / per));
+  const tctx = tiny.getContext("2d");
+  tctx.imageSmoothingQuality = "high";
+  tctx.drawImage(c, ex, ey, ew, eh, 0, 0, tiny.width, tiny.height);
+  // The average colour sits underneath, so nothing original survives anywhere in the box.
+  const avg = document.createElement("canvas");
+  avg.width = avg.height = 1;
+  avg.getContext("2d").drawImage(tiny, 0, 0, 1, 1);
+  const [r, g, bl] = avg.getContext("2d").getImageData(0, 0, 1, 1).data;
   ctx.save();
   ctx.beginPath();
-  ctx.rect(x, y, w, h);
+  if (ctx.roundRect) ctx.roundRect(x, y, w, h, Math.min(w, h) * 0.22);
+  else ctx.rect(x, y, w, h);
   ctx.clip();
-  ctx.imageSmoothingEnabled = false;
-  ctx.filter = `blur(${Math.max(3, Math.round(Math.min(w, h) / 14))}px)`;
-  ctx.drawImage(tiny, 0, 0, tiny.width, tiny.height, x, y, w, h);
-  ctx.filter = "none";
+  ctx.fillStyle = `rgb(${r}, ${g}, ${bl})`;
+  ctx.fillRect(x, y, w, h);
   ctx.imageSmoothingEnabled = true;
+  ctx.filter = `blur(${radius}px)`;
+  ctx.drawImage(tiny, 0, 0, tiny.width, tiny.height, ex, ey, ew, eh);
+  ctx.filter = "none";
   ctx.restore();
 }
 

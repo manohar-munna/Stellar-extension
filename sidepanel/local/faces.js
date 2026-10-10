@@ -68,6 +68,8 @@ function detectIn(det, bitmap, sx, sy, sw, sh, target, { inner = null, minScore 
       w: d.boundingBox.width / k,
       h: d.boundingBox.height / k,
       score: d.categories?.[0]?.score ?? 0,
+      // Eyes, nose, mouth (normalised to the canvas) → bitmap px.
+      kps: (d.keypoints || []).slice(0, 4).map((p) => ({ x: sx + (p.x * c.width) / k, y: sy + (p.y * c.height) / k })),
     }))
     .filter((f) => {
       if (f.score < minScore) return false;
@@ -101,7 +103,7 @@ export async function detectFaces(bitmap, viewport, images = []) {
   //    photo every face ends up tiny. Overlapping square tiles (and half-size
   //    tiles for big images) give each face enough pixels — all of them are found.
   const crops = images
-    .filter((r) => r.w >= 24 && r.h >= 24)
+    .filter((r) => r.w >= 24 && r.h >= 24 && !r.logo)
     .sort((a, b) => b.w * b.h - a.w * a.h)
     .slice(0, MAX_CROPS);
   let budget = MAX_TILE_RUNS;
@@ -125,9 +127,14 @@ export async function detectFaces(bitmap, viewport, images = []) {
     }
   }
 
+  // Not a person: logos and icons (a round logo can fool the detector), and
+  // weak hits that don't have a face's layout (the Moon scored 43–48%).
+  const logos = images.filter((r) => r.logo).map((r) => ({ x: r.x * s, y: r.y * s, w: r.w * s, h: r.h * s }));
+  const real = found.filter((f) => !logos.some((l) => overlapShare(f, l) > 0.5) && (f.score >= SURE_SCORE || (f.score >= MIN_SCORE && faceLayout(f))));
+
   // Merge detections of the same face (seen whole and in tiles), keep the best.
   const kept = [];
-  for (const f of found.sort((a, b) => b.score - a.score)) {
+  for (const f of real.sort((a, b) => b.score - a.score)) {
     if (kept.some((g) => iou(g, f) > 0.3 || overlapShare(f, g) > 0.6 || sameFace(f, g))) continue;
     kept.push(f);
   }
@@ -138,10 +145,10 @@ export async function detectFaces(bitmap, viewport, images = []) {
     // BlazeFace boxes the eyes-to-chin area: widen it and extend upward to
     // cover forehead and hair, a little downward for the chin.
     rect: {
-      x: Math.round((f.x - f.w * 0.22) / s),
+      x: Math.round((f.x - f.w * 0.25) / s),
       y: Math.round((f.y - f.h * 0.5) / s),
-      w: Math.round((f.w * 1.44) / s),
-      h: Math.round((f.h * 1.65) / s),
+      w: Math.round((f.w * 1.5) / s),
+      h: Math.round((f.h * 1.85) / s),
     },
     score: f.score,
     detail: `face (${Math.round(f.score * 100)}%)`,
@@ -150,6 +157,24 @@ export async function detectFaces(bitmap, viewport, images = []) {
 }
 
 const MAX_TILE_RUNS = 260;
+// Detections at or above SURE_SCORE count as faces; between MIN_SCORE and it,
+// only when the eyes, nose and mouth sit where a face's do. Real faces score
+// 0.8–0.95; round things (the Moon, globe logos) score under 0.5.
+const SURE_SCORE = 0.75;
+const MIN_SCORE = 0.5;
+
+/** Eyes roughly level and apart, the nose between them and the mouth, the mouth below. */
+function faceLayout(f) {
+  if (f.kps.length < 4) return true;
+  const [re, le, nose, mouth] = f.kps;
+  const eyeY = (re.y + le.y) / 2;
+  const eyeGap = Math.hypot(re.x - le.x, re.y - le.y);
+  if (eyeGap < 0.25 * f.w) return false;
+  if (Math.abs(re.y - le.y) > 0.6 * eyeGap) return false; // tilted past ~30°
+  if (mouth.y < eyeY + 0.15 * f.h) return false;
+  if (nose.y < eyeY - 0.05 * f.h || nose.y > mouth.y + 0.05 * f.h) return false;
+  return true;
+}
 
 /** Overlapping (50%) square tiles of `size` covering a rect. */
 function tiles(x, y, w, h, size) {

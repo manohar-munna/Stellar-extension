@@ -592,13 +592,37 @@
     return [...names].sort((a, b) => b.length - a.length);
   }
 
-  // Visible images, videos and canvases: where the on-device face detector zooms in.
+  // Visible images, videos and canvases: where the on-device face detector
+  // zooms in. Logos and icons are marked: a round logo (Wikipedia's globe)
+  // can look like a face to the detector, and they never show a person.
+  const LOGO_HINT = /logo|wordmark|brand|emblem|favicon|\bicons?\b|-icon\b|icon-|sprite|badge|mascot|\bcrest\b/i;
+  const PERSON_HINT = /avatar|profile|portrait|headshot|photo|\buser\b|member|author|person|people/i;
+  function looksLikeLogo(el, r) {
+    if (el.closest("svg") || /\.svg(?:[?#]|$)/i.test(el.currentSrc || el.getAttribute("src") || "")) return true;
+    for (let n = el, i = 0; n && n.getAttribute && i < 3; n = n.parentElement, i++) {
+      const cls = typeof n.className === "string" ? n.className : n.getAttribute("class") || "";
+      const hints = `${n.id || ""} ${cls} ${n.getAttribute("alt") || ""} ${n.getAttribute("aria-label") || ""} ${i === 0 ? n.getAttribute("src") || "" : ""}`;
+      if (PERSON_HINT.test(hints)) return false;
+      if (LOGO_HINT.test(hints)) return true;
+    }
+    // A small image in the header that links to the site's home page.
+    const link = el.closest("a[href]");
+    if (link && r.width <= 260 && r.height <= 140 && el.closest("header, [role=banner], nav")) {
+      try {
+        const u = new URL(link.href, location.href);
+        if (u.origin === location.origin && /^\/(?:index\.\w+|wiki\/Main_Page|home)?$/i.test(u.pathname)) return true;
+      } catch {
+        /* not a URL */
+      }
+    }
+    return false;
+  }
   function scanImages() {
     const out = [];
     for (const el of document.querySelectorAll("img, video, canvas, picture, [role=img], [style*='background-image']")) {
       const r = el.getBoundingClientRect();
       if (r.width < 24 || r.height < 24 || !intersectsViewport(r) || !isRendered(el)) continue;
-      out.push(rectOf(r));
+      out.push({ ...rectOf(r), ...(el.tagName !== "VIDEO" && el.tagName !== "CANVAS" && looksLikeLogo(el, r) ? { logo: true } : {}) });
       if (out.length >= 60) break;
     }
     return out;
