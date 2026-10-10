@@ -564,6 +564,7 @@ async function restoreRuns() {
     if (s.id < 1e9) runSeq = Math.max(runSeq, s.id); // scheduled runs use time-based ids
     const el = h("section", { class: "run", "data-run": s.id });
     el.innerHTML = s.html;
+    el.querySelectorAll(".vault-offer.vo-open").forEach((n) => n.remove());
     // Approvals, questions and hand-offs from the old session can't be answered any more.
     el.querySelectorAll(".card .row:has(.btn.ok, .btn.primary, .btn.danger), .watch").forEach((n) => n.remove());
     el.querySelectorAll(".card input, .card textarea").forEach((n) => (n.disabled = true));
@@ -1123,6 +1124,93 @@ const ui = {
     });
   },
 
+  /**
+   * Personal details found on the page that the vault doesn't have: offer to
+   * save them. Doesn't block the run. Values are shown part-masked, because
+   * the run (this card included) is kept on this device's task history.
+   */
+  offerVault(S, fields, { host, onSave }) {
+    const run = activeRun;
+    if (!run) return;
+    const NEVER_KEY = "stellar.vaultNever";
+    let never = [];
+    try {
+      never = JSON.parse(localStorage.getItem(NEVER_KEY) || "[]");
+    } catch {
+      /* storage unavailable */
+    }
+    if (never.includes(host)) return;
+    const label = (k) => ({ DOB: "Date of birth", PAN: "PAN", AADHAAR: "Aadhaar", PINCODE: "PIN code" })[k] || k.charAt(0) + k.slice(1).toLowerCase().replace(/_/g, " ");
+    const peek = (v) => (v.length <= 5 ? `${v[0]}${"•".repeat(v.length - 1)}` : `${v.slice(0, 3)}${"•".repeat(Math.min(8, v.length - 5))}${v.slice(-2)}`);
+    const rows = fields.map((f) => {
+      // A different value than the vault's is offered as an update, unticked.
+      const box = h("input", { type: "checkbox", checked: !f.current });
+      return {
+        f,
+        box,
+        el: h(
+          "label",
+          { class: "vo-row" },
+          box,
+          h("span", { class: "vo-k" }, label(f.key)),
+          h("span", { class: "vo-v" }, peek(f.value)),
+          f.current ? h("span", { class: "pill warn" }, "replaces vault value") : null
+        ),
+      };
+    });
+    const status = h("div", { class: "note" }, `Only save details that are yours. They stay on this device — the AI only ever sees tags like [VAULT_EMAIL].`);
+    const actions = h(
+      "div",
+      { class: "row" },
+      h(
+        "button",
+        {
+          class: "btn primary",
+          onclick: async () => {
+            const picked = rows.filter((r) => r.box.checked).map((r) => r.f);
+            if (!picked.length) return (status.textContent = "Tick at least one detail, or press Not now.");
+            await onSave(picked);
+            finish(`✓ Saved ${picked.length} detail${picked.length === 1 ? "" : "s"} to the private vault (${picked.map((p) => label(p.key)).join(", ")}). Stellar can now fill them into forms.`);
+            toast("Saved to the private vault");
+          },
+        },
+        "Save to vault"
+      ),
+      h("button", { class: "btn ghost", onclick: () => finish("Not saved.") }, "Not now"),
+      h(
+        "button",
+        {
+          class: "btn ghost",
+          onclick: () => {
+            try {
+              localStorage.setItem(NEVER_KEY, JSON.stringify([...never, host]));
+            } catch {
+              /* storage unavailable */
+            }
+            finish(`Not saved — Stellar won't offer this on ${host} again.`);
+          },
+        },
+        "Never on this site"
+      )
+    );
+    const box = card(
+      { title: `Your details on ${host}`, badge: "local", badgeText: "on-device" },
+      h("div", { class: "note" }, `Found ${fields.length} personal detail${fields.length === 1 ? "" : "s"} on this page that your private vault doesn't have yet. Save them so Stellar can fill forms for you?`),
+      h("div", { class: "vo-list" }, rows.map((r) => r.el)),
+      status,
+      actions
+    );
+    box.classList.add("zone-local", "vault-offer", "vo-open");
+    const finish = (text) => {
+      box.classList.remove("vo-open");
+      box.querySelector(".vo-list")?.remove();
+      actions.remove();
+      status.textContent = text;
+      persistRun(run);
+    };
+    append(run.el, box);
+  },
+
   cancelPending() {
     for (const p of [...pending]) p();
     pending = [];
@@ -1435,6 +1523,7 @@ async function openSettings() {
   $("#localPreload").checked = s.localPreload !== false;
   $("#realClick").checked = s.realClick !== false;
   $("#redactNames").checked = s.redactNames !== false;
+  $("#vaultFromPages").checked = s.vaultFromPages !== false;
   $("#speakReplies").checked = s.speakReplies !== false;
   (document.querySelector(`input[name=localUnload][value="${s.localUnloadMinutes ?? 10}"]`) || document.querySelector("input[name=localUnload][value='10']")).checked = true;
   $("#vaultGemini").checked = s.vaultExtract === "gemini";
@@ -1494,6 +1583,7 @@ async function saveAllSettings() {
     localPreload: $("#localPreload").checked,
     realClick: $("#realClick").checked,
     redactNames: $("#redactNames").checked,
+    vaultFromPages: $("#vaultFromPages").checked,
     speakReplies: $("#speakReplies").checked,
     localUnloadMinutes: Number(document.querySelector("input[name=localUnload]:checked")?.value ?? 10),
     vaultExtract: $("#vaultGemini").checked ? "gemini" : "local",

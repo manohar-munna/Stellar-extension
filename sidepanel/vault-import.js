@@ -320,6 +320,59 @@ export async function extractFromFile(file, { mode = "local", apiKey, model } = 
 }
 
 /** Merge reviewed fields into the vault text, renaming clashes (EMAIL → EMAIL_2). */
+// Fields worth offering from a web page: the user's identity details only
+// (not "Title", "Role", "Card number" and the like, which pages use for anything).
+const PAGE_KEYS = ["NAME", "FIRST_NAME", "LAST_NAME", "DOB", "GENDER", "EMAIL", "PHONE", "ADDRESS", "CITY", "STATE", "PINCODE", "PAN", "AADHAAR", "PASSPORT"];
+const IDENTITY_KEYS = ["NAME", "EMAIL", "PHONE", "DOB", "ADDRESS", "PAN", "AADHAAR", "PASSPORT"];
+
+/**
+ * Labelled values read from a page ([{ label, value }]) → vault fields, minus
+ * what the vault already holds. Offered only when it looks like a person's
+ * details (two or more identity fields), not a stray "Email" box.
+ */
+export function vaultFieldsFromPage(pairs, vaultText) {
+  const out = [];
+  for (const { label, value } of pairs || []) {
+    const key = canonicalKey(label);
+    if (key && PAGE_KEYS.includes(key)) addField(out, key, value, "page");
+  }
+  // One per key (the first shown), and an address "street, City 560025" is split.
+  const byKey = new Map();
+  for (const f of out) if (!byKey.has(f.key)) byKey.set(f.key, f);
+  const addr = byKey.get("ADDRESS");
+  const m = addr?.value.match(/^(.*\S),\s*([A-Za-z][A-Za-z .]{1,40}?)\s*[,-]?\s*(\d{6})$/);
+  if (m) {
+    addr.value = m[1];
+    if (!byKey.has("CITY")) byKey.set("CITY", { key: "CITY", value: m[2].trim(), source: "page" });
+    if (!byKey.has("PINCODE")) byKey.set("PINCODE", { key: "PINCODE", value: m[3], source: "page" });
+  }
+  if ([...byKey.keys()].filter((k) => IDENTITY_KEYS.includes(k)).length < 2) return [];
+  const existing = new Map(
+    String(vaultText || "")
+      .split(/\r?\n/)
+      .filter((l) => l.includes("="))
+      .map((l) => [l.split("=")[0].trim().toUpperCase(), l.slice(l.indexOf("=") + 1).trim()])
+  );
+  const norm = (k, v) => (["PHONE", "AADHAAR", "PINCODE"].includes(k) ? v.replace(/\D/g, "").slice(-10) : v.toLowerCase().replace(/\s+/g, " "));
+  return [...byKey.values()]
+    .filter((f) => !existing.has(f.key) || norm(f.key, existing.get(f.key)) !== norm(f.key, f.value))
+    .map((f) => ({ key: f.key, value: f.value, current: existing.get(f.key) || null }));
+}
+
+/** Set vault keys: replace a key's value if present, else add it. */
+export function upsertVault(vaultText, fields) {
+  const lines = String(vaultText || "").split(/\r?\n/).filter((l) => l.trim());
+  let changed = 0;
+  for (const f of fields) {
+    const key = f.key.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+    const i = lines.findIndex((l) => l.split("=")[0].trim().toUpperCase() === key);
+    if (i >= 0) lines[i] = `${key}=${f.value}`;
+    else lines.push(`${key}=${f.value}`);
+    changed++;
+  }
+  return { text: lines.join("\n"), changed };
+}
+
 export function mergeIntoVault(vaultText, fields) {
   const lines = String(vaultText || "").split(/\r?\n/).filter((l) => l.trim());
   const existing = new Map(lines.map((l) => [l.split("=")[0].trim().toUpperCase(), l.slice(l.indexOf("=") + 1).trim()]));

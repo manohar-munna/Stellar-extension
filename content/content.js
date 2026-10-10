@@ -836,6 +836,50 @@
     return overlayRoot;
   }
 
+  // Labelled personal details shown on the page ("Full name  Aarav Sharma"):
+  // description lists, two-cell table rows, filled-in form fields, two-part
+  // rows and "Label: value" lines. The panel decides which are vault fields
+  // and offers to save them; nothing here leaves the device. Credentials are
+  // never collected.
+  const FIELD_SKIP = /password|passcode|one[- ]?time|\botp\b|cvv|cvc|card|security code|^pin$|token|secret|api key/i;
+  function labelledFields() {
+    const out = [];
+    const seen = new Set();
+    const push = (label, value, el) => {
+      label = collapse(label || "").replace(/[:*\s]+$/, "");
+      value = collapse(value || "");
+      if (!label || !value || label.length > 40 || value.length > 200 || FIELD_SKIP.test(label)) return;
+      if (el && (!isRendered(el) || !el.getClientRects().length)) return;
+      const key = `${label.toLowerCase()}|${value}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ label, value });
+    };
+    for (const dt of document.querySelectorAll("dt")) {
+      const dd = dt.nextElementSibling;
+      if (dd?.tagName === "DD") push(dt.textContent, dd.innerText, dd);
+    }
+    for (const tr of document.querySelectorAll("tr")) {
+      if (tr.children.length === 2) push(tr.children[0].textContent, tr.children[1].innerText, tr);
+    }
+    for (const inp of document.querySelectorAll("input, textarea")) {
+      if (/^(password|hidden|checkbox|radio|file|submit|button|reset|image|range|color)$/i.test(inp.type) || !inp.value) continue;
+      push(inp.labels?.[0]?.textContent || inp.getAttribute("aria-label") || inp.placeholder || "", inp.value, inp);
+    }
+    let looked = 0;
+    for (const el of document.querySelectorAll("li, p, div, span")) {
+      if (++looked > 5000 || out.length >= 120) break;
+      if (el.children.length === 2 && !el.querySelector("dt, tr, input, textarea")) {
+        const [a, b] = el.children;
+        if (!a.children.length && b.innerText) push(a.textContent, b.innerText, el);
+      } else if (!el.children.length) {
+        const m = (el.textContent || "").match(/^\s*([A-Za-z][A-Za-z .'/()-]{1,30}?)\s*:\s*(.{2,200}?)\s*$/);
+        if (m) push(m[1], m[2], el);
+      }
+    }
+    return out.slice(0, 120);
+  }
+
   // Before a screenshot: wait until the page stops changing and the pictures
   // on screen have loaded. "Loaded" for the tab isn't enough — single-page
   // sites (YouTube, Gmail) swap content in after a click without a reload,
@@ -1344,6 +1388,8 @@
         return true;
       case "settle":
         return settleView(cmd);
+      case "fields":
+        return labelledFields();
       default:
         return { error: `unknown op ${cmd.op}` };
     }

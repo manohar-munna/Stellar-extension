@@ -2011,3 +2011,40 @@ table.prices tr.best td:last-child {
     transform: none;
   }
 }
+
+/* ------------------------------------------------- save page details to vault */
+
+.vo-list {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 6px;
+}
+
+.vo-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.vo-row .vo-k {
+  min-width: 92px;
+  color: var(--muted);
+}
+
+.vo-row .vo-v {
+  flex: 1;
+  font-family: ui-monospace, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-offer .row {
+  flex-wrap: wrap;
+}

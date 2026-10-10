@@ -3,7 +3,7 @@
 
 import { generateJson } from "./gemini.js";
 import { loadSettings, saveSettings } from "./settings.js";
-import { mergeIntoVault } from "./vault-import.js";
+import { mergeIntoVault, vaultFieldsFromPage, upsertVault } from "./vault-import.js";
 import { DETECT_PROMPT, DETECT_SCHEMA, AGENT_SYSTEM, ACTION_SCHEMA, buildStepPrompt } from "./prompts.js";
 import { buildRegions, parseVault, knownSecrets, nameSecrets, substitutionSecrets, scrubText, scrubUrl, leakCheck, coverage } from "./privacy.js";
 import { loadBitmap, renderDetection, renderSanitized, encodeJpeg } from "./redact.js";
@@ -93,6 +93,35 @@ export class StellarAgent {
       args: [cmd],
     });
     return res?.result;
+  }
+
+  /** Labelled personal details on the page → a "save to vault?" card (once per site per run). */
+  async offerPageDetails(tabId, S, vault, url) {
+    let host = "";
+    try {
+      host = new URL(url).host;
+    } catch {
+      return;
+    }
+    this.vaultOffered ||= new Set();
+    if (this.vaultOffered.has(host)) return;
+    const pairs = await this.cs(tabId, { op: "fields" });
+    const fields = vaultFieldsFromPage(pairs, (await loadSettings()).vault);
+    if (!fields.length) return;
+    this.vaultOffered.add(host);
+    this.ui.offerVault(S, fields, {
+      host,
+      onSave: async (picked) => {
+        const current = (await loadSettings()).vault;
+        await saveSettings({ vault: upsertVault(current, picked).text });
+        // Usable in this run straight away as [VAULT_…] tags.
+        for (const f of picked) {
+          const tag = `VAULT_${f.key}`;
+          for (let i = vault.length - 1; i >= 0; i--) if (vault[i].tag === tag) vault.splice(i, 1);
+          vault.push({ tag, value: f.value });
+        }
+      },
+    });
   }
 
   async ensureActive(tabId) {
@@ -584,6 +613,10 @@ export class StellarAgent {
           image: encodeJpeg(detectCanvas, 900, 0.8).dataUrl,
         });
         this.checkStop();
+        // The user's own details shown on this page (a profile, an account
+        // page): offer to keep them in the private vault. A quick local read;
+        // the card itself doesn't wait for the user.
+        if (settings.vaultFromPages !== false) await this.offerPageDetails(tabId, S, vault, scan.url).catch((e) => console.warn("[stellar] vault offer failed", e));
 
         // ----------------------------------------------------------- 3 REDACT
         ui.setStage("redact");

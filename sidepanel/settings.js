@@ -33,6 +33,8 @@ export const DEFAULTS = {
   realClick: true,
   // Hide people's names (others' and your own) behind [NAME_01]-style tags.
   redactNames: true,
+  // Offer to save the user's own details found on a page (profile, account) to the vault.
+  vaultFromPages: true,
   // Voice: the language you speak ("auto" identifies it), the last language
   // identified, and whether replies to spoken tasks are read aloud.
   voiceLang: "auto",
