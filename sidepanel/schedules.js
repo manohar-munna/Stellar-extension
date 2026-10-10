@@ -120,7 +120,7 @@ export function parseScheduleText(text) {
   };
   let r = take(/\b(?:at\s+|@\s*|by\s+|around\s+)?(\d{1,2})(?:[:.](\d{2}))?\s*(a\.?m\.?|p\.?m\.?)(?![a-z])/i);
   if (r) [h, m, ampm] = [Number(r[1]), Number(r[2] || 0), r[3].toLowerCase()[0]];
-  else if ((r = take(/(?:\bat\s+|@\s*)(\d{1,2})(?:[:.](\d{2}))?\b(?!\s*(?:%|rs|₹|km|kg|days?|hours?|hrs?|min))/i))) [h, m] = [Number(r[1]), Number(r[2] || 0)];
+  else if ((r = take(/(?:\bat\s+|@\s*)(\d{1,2})(?:[:.](\d{2}))?\b(?!\s*(?:%|rs|₹|km|kg|days?|hours?|hrs?|min|stores?|shops?|sites?|websites?|tabs?|places?|items?|products?|pages?|times?|people|persons?)\b)/i))) [h, m] = [Number(r[1]), Number(r[2] || 0)];
   else if ((r = take(/\b([01]?\d|2[0-3]):([0-5]\d)\b/))) [h, m] = [Number(r[1]), Number(r[2])];
 
   const part = /\bmorning\b/i.test(t) ? "morning" : /\bafternoon\b/i.test(t) ? "afternoon" : /\bevening\b/i.test(t) ? "evening" : /\b(?:night|tonight)\b/i.test(t) ? "night" : /\bnoon\b/i.test(t) ? "noon" : "";
@@ -129,6 +129,7 @@ export function parseScheduleText(text) {
     if (ampm === "p" && h < 12) h += 12;
     if (ampm === "a" && h === 12) h = 0;
     if (!ampm && h < 12 && ["afternoon", "evening", "night"].includes(part)) h += 12;
+    if (!ampm && h === 12 && part === "night") h = 0; // "every night at 12" is midnight
     h = Math.min(23, Math.max(0, h));
     m = Math.min(59, Math.max(0, m || 0));
   }
@@ -142,11 +143,17 @@ export function parseScheduleText(text) {
       const map = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
       days = [...new Set(named[1].toLowerCase().match(/sun|mon|tue|wed|thu|fri|sat/g).map((d) => map[d]))].sort();
     } else if (/\b(?:every|each)\s+(?:day|morning|afternoon|evening|night)\b|\b(?:daily|everyday)\b/i.test(t)) days = [...EVERY_DAY];
+    else if (/\btomorrow\b/i.test(t)) days = [(new Date().getDay() + 1) % 7];
+    else if (/\btoday\b/i.test(t) && h != null) days = [new Date().getDay()];
   }
-  const found = h != null || days != null || /\b(?:every|each|daily|everyday)\b/i.test(t);
+  // "every 2 hours" — schedules run at set times on chosen days, not on an interval.
+  const interval = /\bevery\s+(?:\d+\s*|few\s+|couple of\s+)?(?:hours?|hrs?|minutes?|mins?)\b/i.test(t);
+  const found = !interval && (h != null || days != null || /\b(?:every|each|daily|everyday)\b/i.test(t));
 
   // What's left is the task itself.
   t = t
+    .replace(/\b(?:(?:every|each|on|from)\s+)?mon(?:day)?\s*(?:to|through|-|–)\s*fri(?:day)?\b/gi, " ")
+    .replace(/\b(?:tomorrow|today)\b/gi, " ")
     .replace(new RegExp(`\\b(?:every|each|on)\\s+(?:day|morning|afternoon|evening|night|weekdays?|weekends?|${DAY_RE})(?:\\s*(?:,|and|&)\\s*(?:${DAY_RE}))*\\b`, "gi"), " ")
     .replace(/\bmon(?:day)?\s*(?:to|through|-|–)\s*fri(?:day)?\b/gi, " ")
     .replace(/\b(?:daily|everyday|tonight)\b/gi, " ")
@@ -160,6 +167,7 @@ export function parseScheduleText(text) {
     time: h != null ? `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}` : null,
     days,
     found,
+    interval,
   };
 }
 

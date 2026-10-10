@@ -24,8 +24,21 @@ const SUMMARY_SCHEMA = {
   propertyOrdering: ["headline", "summary", "key_points", "watch_out"],
 };
 
-// Credentials and IDs stay as tags even in the answer shown to the user.
-const KEEP_HIDDEN = /^(PASSWORD|API_KEY|OTP|CVV|CARD|ACCOUNT|GOV_ID)_\d+$/;
+// Credentials and ID numbers are never filled back in (the run is saved to
+// disk): page tags like [GOV_ID_01] and the user's own [VAULT_PAN] alike.
+const SECRET_KIND = /^(?:PASSWORD|PASSCODE|API_KEY|OTP|CVV|SECRET|TOKEN|UPI_PIN|ATM_PIN)$/;
+const ID_KIND = /^(?:CARD|CARD_NUMBER|CREDIT_CARD|DEBIT_CARD|ACCOUNT|ACCOUNT_NUMBER|BANK_ACCOUNT|GOV_ID|ID_NUMBER|AADHAAR|AADHAAR_NUMBER|PAN|PAN_NUMBER|PASSPORT|PASSPORT_NUMBER|SSN|VOTER_ID|DRIVING_LICENCE|DRIVING_LICENSE)$/;
+const kindOf = (tag) => tag.replace(/^VAULT_/, "").replace(/_\d+$/, "");
+/** What the user sees in place of a hidden value: nothing for secrets, the last 4 characters of an ID. */
+function masked(tag, value) {
+  const kind = kindOf(tag);
+  if (SECRET_KIND.test(kind)) return "(hidden)";
+  if (ID_KIND.test(kind)) {
+    const tail = String(value || "").replace(/[\s-]/g, "").slice(-4);
+    return tail ? `••••${tail}` : "(hidden)";
+  }
+  return null;
+}
 
 export class LeakError extends Error {}
 
@@ -126,14 +139,20 @@ export async function summarizeTab({ tab, settings, signal, rep, stages }) {
   return { summary, display, context, model: res.model, latencyMs: res.latencyMs, usage: res.usage };
 }
 
-/** Tags in model text → local values for display; credentials and IDs stay tags. */
+/** Tags in model text → local values for display; credentials hidden, IDs shown as ••••1234. */
 function filler(secrets) {
   const byTag = new Map(secrets.map((s) => [s.tag, s.value]));
-  return (s) => String(s ?? "").replace(/\[([A-Z][A-Z0-9_]*_\d{2}|VAULT_[A-Z0-9_]+)\]/g, (m, t) => (!KEEP_HIDDEN.test(t) && byTag.has(t) ? byTag.get(t) : m));
+  return (s) =>
+    String(s ?? "").replace(/\[([A-Z][A-Z0-9_]*_\d{2}|VAULT_[A-Z0-9_]+)\]/g, (m, t) => {
+      if (!byTag.has(t)) return m;
+      return masked(t, byTag.get(t)) ?? byTag.get(t);
+    });
 }
 
 const ASK_SYSTEM = `${SUMMARY_SYSTEM}
-- Answer the user's question about the page in 1 to 4 short sentences. If the page doesn't say, answer "The page doesn't say." Quote numbers and dates exactly.`;
+- Answer the user's question about the page in 1 to 4 short sentences. Quote numbers and dates exactly.
+- A tag is a real value that the user sees filled in on their own screen. When the answer is behind a tag (for example "Date of birth: [DOB_01]" or an address shown as [ADDRESS_01]), answer with the tag: "Your date of birth is [DOB_01]." That is a full answer — don't say the page doesn't say.
+- Only if the page really has nothing on it, answer "The page doesn't say."`;
 
 const ASK_SCHEMA = { type: "OBJECT", properties: { answer: { type: "STRING" } }, required: ["answer"] };
 

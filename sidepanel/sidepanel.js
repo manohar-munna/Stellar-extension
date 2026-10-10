@@ -11,7 +11,7 @@ import { listFiles, putFile, deleteFile, renameFile, guessFileKey, prettySize, f
 import { VOICE_LANGS, Listener, speak, stopSpeaking, voiceSupported, identifyLanguage, languageName, fullTag } from "./voice.js";
 import { newReport, addHidden, categoryOfTag, reportText, reportJson } from "./report.js";
 import { summarizeTab, askAboutPage } from "./summary.js";
-import { SHOPS, DEFAULT_SHOPS, parseCompareQuery, comparePrices } from "./compare.js";
+import { SHOPS, DEFAULT_SHOPS, parseCompareQuery, comparePrices, closeLeftoverCompareTabs } from "./compare.js";
 import { EVERY_DAY, DAY_NAMES, listSchedules, upsertSchedule, updateSchedule, removeSchedule, armSchedule, describeWhen, describeNext, parseScheduleText, openRunner, createWindowAt } from "./schedules.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -2227,7 +2227,13 @@ async function openSchedules(preset = null) {
     if (p.time) $("#schedTime").value = p.time;
     if (p.days) setDays(p.days);
   }
-  $("#schedStatus").textContent = preset ? "Pick when to check — you'll get a notification with the cheapest price." : p.found ? "Filled in from what you typed — check it, then add." : "";
+  $("#schedStatus").textContent = preset
+    ? "Pick when to check — you'll get a notification with the cheapest price."
+    : p.interval
+      ? "Schedules run at a set time on the days you pick (not every few hours) — choose the time and days."
+      : p.found
+        ? "Filled in from what you typed — check it, then add."
+        : "";
   renderSchedules();
   schedDrawer.hidden = false;
 }
@@ -2259,7 +2265,7 @@ async function renderSchedules() {
         h(
           "div",
           { class: "sched-actions" },
-          h("button", { class: "btn ghost sm", type: "button", title: "Run it now in its own window", onclick: () => openRunner(s.id) }, "Run now"),
+          h("button", { class: "btn ghost sm", type: "button", title: "Run it now in its own window", onclick: () => runScheduleNow(s.id) }, "Run now"),
           h(
             "button",
             {
@@ -2291,6 +2297,15 @@ async function renderSchedules() {
       )
     )
   );
+}
+
+/** "Run now" waits its turn like an alarm would: one scheduled task at a time. */
+async function runScheduleNow(id) {
+  const { schedRunning } = await chrome.storage.session.get("schedRunning").catch(() => ({}));
+  if (schedRunning && Date.now() - schedRunning.at < 30 * 60_000) return toast("Another scheduled task is running — try again when it finishes");
+  await chrome.storage.session.set({ schedRunning: { id, at: Date.now() } }).catch(() => {});
+  const win = await openRunner(id);
+  await chrome.storage.session.set({ schedRunning: { id, at: Date.now(), winId: win?.id } }).catch(() => {});
 }
 
 $("#schedBtn").addEventListener("click", () => openSchedules());
@@ -2327,11 +2342,11 @@ $("#schedSave").addEventListener("click", async () => {
     mode: document.querySelector("input[name=schedMode]:checked")?.value || "safe",
     startUrl,
     closeWhenDone: $("#schedClose").checked,
-    enabled: true,
+    enabled: editingSchedule ? (await listSchedules()).find((x) => x.id === editingSchedule)?.enabled !== false : true,
   };
   if (schedPreset) Object.assign(s, { kind: "compare", query: task, shops: schedPreset.shops, budget: schedPreset.budget ?? null, task: `Price watch: ${task}`, startUrl: "" });
   await upsertSchedule(s);
-  toast(schedPreset ? "Price watch added" : "Schedule added");
+  toast(editingSchedule ? "Schedule saved" : schedPreset ? "Price watch added" : "Schedule added");
   status.textContent = `Saved ✓ — ${describeNext(s).replace(/^Next: /, "next run ")}.`;
   fillScheduleForm(null);
   renderSchedules();
@@ -2365,7 +2380,8 @@ async function runScheduled(id) {
   const s = (await listSchedules()).find((x) => x.id === id);
   if (!s) return ui.status("This scheduled task no longer exists.");
   document.title = `⏰ ${s.task.slice(0, 40)} — Stellar`;
-  await chrome.storage.session.set({ schedRunning: { id, at: Date.now() } }).catch(() => {});
+  const me = await chrome.windows.getCurrent().catch(() => null);
+  await chrome.storage.session.set({ schedRunning: { id, at: Date.now(), winId: me?.id } }).catch(() => {});
   const meta = { id: Date.now(), title: `⏰ ${s.time}`, schedule: s };
   let win = null;
   try {
@@ -2377,7 +2393,8 @@ async function runScheduled(id) {
   }
   const run = ui.lastFinished;
   const ok = run?.status === "done";
-  const message = run?.displayMessage || "The scheduled task didn't start.";
+  // The tagged text: real names stay out of the OS notification centre and storage.
+  const message = run?.finalMessage || run?.displayMessage || "The scheduled task didn't start.";
   await updateSchedule(id, { lastRun: Date.now(), lastResult: { ok, at: Date.now(), message: message.slice(0, 500) } });
   chrome.notifications.create(`stellar-done-${id}-${Date.now()}`, {
     type: "basic",
@@ -2428,6 +2445,7 @@ function closeCountdown(secs) {
 (async () => {
   const scheduledId = new URLSearchParams(location.search).get("scheduled");
   if (!scheduledId) restoreRuns();
+  closeLeftoverCompareTabs().catch(() => {});
   const s = await loadSettings();
   applyPresenter(s.presenter);
   applyLook({ theme: s.theme, palette: s.palette });

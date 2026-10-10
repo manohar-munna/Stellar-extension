@@ -644,7 +644,7 @@
   // Reads only the product cards of a shop's search results — not the account
   // bar, delivery address or cart — so personal details stay out of it.
 
-  const PRICE_RE = /(?:₹|Rs\.?|INR|\$|€|£)\s?(\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/i;
+  const PRICE_RE = /(?<![A-Za-z])(?:₹|Rs\.?|INR|\$|€|£)\s?(\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/i;
   const PRODUCT_HREF = /\/dp\/[A-Z0-9]{10}|\/gp\/product\/|\/p\/itm|\/\d{5,}\/buy|\/p\/\d{6,}|\/product\/[^/]+\/\d+|\/p\/[a-z0-9]{4,}$/i;
   const SHOP_CARDS = [
     {

@@ -17,8 +17,15 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 // A scheduled task is due: open a Stellar window that runs it (one at a time).
-chrome.alarms.onAlarm.addListener(async (alarm) => {
+// Alarms are handled one after another, so two schedules due at the same
+// minute can't both see "nothing running" and open two windows.
+let alarmQueue = Promise.resolve();
+chrome.alarms.onAlarm.addListener((alarm) => {
   if (!alarm.name.startsWith(ALARM_PREFIX)) return;
+  alarmQueue = alarmQueue.then(() => onScheduleAlarm(alarm)).catch((err) => console.error("[stellar] scheduled task failed to start", err));
+});
+
+async function onScheduleAlarm(alarm) {
   const [id, retry] = alarm.name.slice(ALARM_PREFIX.length).split(":");
   const s = (await listSchedules()).find((x) => x.id === id);
   if (!s || s.enabled === false) return;
@@ -33,12 +40,18 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     return;
   }
   await chrome.storage.session.set({ schedRunning: { id, at: Date.now() } });
-  await openRunner(id);
-});
+  const win = await openRunner(id);
+  await chrome.storage.session.set({ schedRunning: { id, at: Date.now(), winId: win?.id } });
+}
 
-// Clicking a "scheduled task finished" notification shows the result.
-chrome.notifications.onClicked.addListener((nid) => {
+// Clicking a notification: "needs you" brings the running task's own window
+// forward (only it can approve); "finished" shows the result.
+chrome.notifications.onClicked.addListener(async (nid) => {
   if (!nid.startsWith("stellar-")) return;
   chrome.notifications.clear(nid);
+  if (nid.startsWith("stellar-wait-")) {
+    const { schedRunning } = await chrome.storage.session.get("schedRunning");
+    if (schedRunning?.winId && (await chrome.windows.update(schedRunning.winId, { focused: true }).catch(() => null))) return;
+  }
   chrome.windows.create({ url: chrome.runtime.getURL("sidepanel/sidepanel.html?popout=1"), type: "popup", width: 560, height: 960 });
 });

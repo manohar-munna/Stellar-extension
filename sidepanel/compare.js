@@ -31,8 +31,9 @@ export function parseCompareQuery(text, selected = DEFAULT_SHOPS) {
   t = t.replace(/\b(?:please\s+)?(?:compare|comparing|check|find|search|look up)\b(?:\s+(?:the|for))?(?:\s+(?:best|lowest|cheapest))?(?:\s+(?:prices?|rates?|costs?|deals?))?(?:\s+(?:of|for|on))?/gi, " ");
   t = t.replace(/\b(?:prices?|rates?)\s+(?:of|for)\b/gi, " ");
   let budget = null;
-  t = t.replace(/\b(?:under|below|less than|within|up ?to|max(?:imum)?)\s*(?:₹|rs\.?|inr)?\s*(\d[\d,]*)(\s*k)?\b/gi, (m, n, k) => {
-    budget = parseFloat(n.replace(/,/g, "")) * (k ? 1000 : 1);
+  t = t.replace(/\b(?:under|below|less than|within|up ?to|max(?:imum)?)\s*(?:₹|rs\.?|inr)?\s*(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|l|lakhs?|lacs?)?\b/gi, (m, n, unit) => {
+    const mult = !unit ? 1 : /^(?:k|thousand)$/i.test(unit) ? 1000 : 100000;
+    budget = Math.round(parseFloat(n.replace(/,/g, "")) * mult);
     return " ";
   });
   // Connectors left behind by the shop names ("on  and  ,").
@@ -50,12 +51,33 @@ function relevance(name, words) {
 
 const sleep = (ms, signal) =>
   new Promise((resolve, reject) => {
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener("abort", () => {
+    if (signal?.aborted) return reject(signal.reason || new Error("Stopped"));
+    const onAbort = () => {
       clearTimeout(t);
       reject(signal.reason || new Error("Stopped"));
-    });
+    };
+    const t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
+
+// Accessories that share the product's name; the on-device pick skips them
+// unless the user asked for one.
+const ACCESSORY = /\b(?:case|cover|covers|skin|screen guard|screen protector|tempered glass|protector|pouch|strap|charger|cable|adapter|stand|holder|mount|sticker|replacement|spare)\b/i;
+
+// Store tabs still open from a compare that never finished (the panel was
+// closed mid-way): closed the next time the panel starts. A compare younger
+// than 3 minutes may still be running in another Stellar window: left alone.
+const OPEN_TABS_KEY = "compareOpenTabs";
+export async function closeLeftoverCompareTabs() {
+  const got = await chrome.storage.session.get(OPEN_TABS_KEY).catch(() => ({}));
+  const { ids = [], at = 0 } = got?.[OPEN_TABS_KEY] || {};
+  if (!ids.length || Date.now() - at < 180_000) return;
+  await chrome.storage.session.remove(OPEN_TABS_KEY).catch(() => {});
+  for (const id of ids) chrome.tabs.remove(id).catch(() => {});
+}
 
 async function readProducts(tabId) {
   await chrome.scripting.executeScript({ target: { tabId }, files: ["content/content.js"] });
@@ -127,16 +149,17 @@ export async function comparePrices({ query, shopIds, budget, settings, signal, 
   if (!shops.length) throw new Error("Pick at least one store (Settings → Price compare).");
   const words = query.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 2 && !STOP.has(w));
 
-  // Open every store at once, in the background.
   const tabs = new Map();
-  for (const s of shops) {
-    const tab = await chrome.tabs.create({ windowId, url: s.url(query), active: false });
-    tabs.set(s.id, tab.id);
-    onShop(s.id, { state: "loading" });
-  }
   const keepOpen = new Set();
   let all = [];
   try {
+    // Open every store at once, in the background.
+    for (const s of shops) {
+      const tab = await chrome.tabs.create({ windowId, url: s.url(query), active: false });
+      tabs.set(s.id, tab.id);
+      await chrome.storage.session.set({ [OPEN_TABS_KEY]: { ids: [...tabs.values()], at: Date.now() } }).catch(() => {});
+      onShop(s.id, { state: "loading" });
+    }
     const results = await Promise.all(
       shops.map(async (s) => {
         const r = await collect(tabs.get(s.id), signal).catch((e) => {
@@ -161,12 +184,15 @@ export async function comparePrices({ query, shopIds, budget, settings, signal, 
   } finally {
     // Store tabs close when done (unless a store needs the user, or they asked to keep them).
     for (const [id, tabId] of tabs) if (!settings.compareKeepTabs && !keepOpen.has(id)) chrome.tabs.remove(tabId).catch(() => {});
+    await chrome.storage.session.remove(OPEN_TABS_KEY).catch(() => {});
   }
   if (!all.length) throw new Error("No prices could be read from the stores. Try a shorter product name, or open a store tab to check it loads.");
 
   // Local pick: listings that mention the product, within budget, cheapest first.
   const inBudget = (i) => budget == null || i.price <= budget;
-  let picks = all.filter((i) => i.score >= 0.5 && inBudget(i));
+  const wantsAccessory = ACCESSORY.test(query);
+  let picks = all.filter((i) => i.score >= 0.5 && inBudget(i) && (wantsAccessory || !ACCESSORY.test(i.name)));
+  if (!picks.length) picks = all.filter((i) => i.score >= 0.5 && inBudget(i));
   if (!picks.length) picks = all.filter(inBudget);
   let verdict = "";
   let model = "";
