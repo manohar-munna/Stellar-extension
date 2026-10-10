@@ -344,6 +344,21 @@
     { category: "PHONE", re: /(?<!\w)\+\d{1,3}[ ().-]*\d{2,4}[ ().-]*\d{3,4}[ .-]*\d{3,4}(?!\d)/g },
     { category: "PHONE", re: /\(\d{3}\) ?\d{3}-\d{4}(?!\d)/g },
   ];
+  // Values that only a label identifies: date of birth, postal address, PIN.
+  // "Label: value", a label line followed by the value line (page text), or —
+  // for a single text node — the label beside it (context).
+  const DATE_VALUE = String.raw`(?:[0-3]?\d[\/.\- ][01]?\d[\/.\- ](?:19|20)\d{2}|(?:19|20)\d{2}[\/.\-][01]?\d[\/.\-][0-3]?\d|[0-3]?\d(?:st|nd|rd|th)?\s+[A-Za-z]{3,9},?\s+(?:19|20)\d{2}|[A-Za-z]{3,9}\s+[0-3]?\d,?\s+(?:19|20)\d{2})`;
+  const LABELLED = [
+    { category: "DOB", re: new RegExp(String.raw`(?:date of birth|birth ?date|d\.?o\.?b\.?|born(?: on)?)\s*[:\-–]?\s*\n?\s*(` + DATE_VALUE + ")", "gi") },
+    { category: "ADDRESS", re: /(?<!e-?mail |ip |web |mac |wallet |email\n)(?:(?:residential|permanent|home|postal|mailing|billing|shipping|delivery|current) )?address\s*[:\-–]?\s*\n?\s*([^\n@]{6,140})/gi, accept: (v) => /\d|,/.test(v) && !/^(?:line|of|for|book|change|edit|add)\b/i.test(v) },
+    { category: "ADDRESS", re: /(?:pin ?code|postal code|zip(?: code)?|post ?code)\s*[:\-–]?\s*\n?\s*(\d{5,6}(?:-\d{4})?)/gi },
+  ];
+  const CONTEXT_RULES = [
+    { category: "DOB", ctx: /\b(?:date of birth|birth ?date|d\.?o\.?b|born)\b/i, accept: (t) => new RegExp("^\\s*" + DATE_VALUE + "\\s*$", "i").test(t) },
+    { category: "ADDRESS", ctx: /\baddress\b/i, notCtx: /e-?mail|\bip\b|web|wallet|mac/i, accept: (t) => t.trim().length >= 6 && t.trim().length <= 160 && /\d|,/.test(t) && !/@/.test(t) },
+    { category: "ADDRESS", ctx: /pin ?code|postal|zip|post ?code/i, accept: (t) => /^\s*\d{5,6}(?:-\d{4})?\s*$/.test(t) },
+  ];
+
   // A bare digit run is only an account number when its label says so.
   const ACCOUNT_CONTEXT = /\b(?:bank|account|acct|a\/c)\b/i;
   const ACCOUNT_NUMBER = /(?<![\d+])\d(?:[ -]?\d){8,17}(?!\d)/g;
@@ -378,6 +393,26 @@
         if (p.accept && !p.accept(m[0])) continue;
         if (hits.some((h) => start < h.end && end > h.start)) continue;
         hits.push({ category: p.category, start, end, value: m[0] });
+      }
+    }
+    for (const rule of LABELLED) {
+      rule.re.lastIndex = 0;
+      let m;
+      while ((m = rule.re.exec(text))) {
+        const v = m[1].trim();
+        if (rule.accept && !rule.accept(v)) continue;
+        const start = m.index + m[0].lastIndexOf(v);
+        const end = start + v.length;
+        if (!hits.some((h) => start < h.end && end > h.start)) hits.push({ category: rule.category, start, end, value: v });
+      }
+    }
+    if (context) {
+      for (const rule of CONTEXT_RULES) {
+        if (!rule.ctx.test(context) || (rule.notCtx && rule.notCtx.test(context)) || !rule.accept(text)) continue;
+        const v = text.trim();
+        const start = text.indexOf(v);
+        const end = start + v.length;
+        if (!hits.some((h) => start < h.end && end > h.start)) hits.push({ category: rule.category, start, end, value: v });
       }
     }
     if (ACCOUNT_CONTEXT.test(context) || ACCOUNT_CONTEXT.test(text)) {
